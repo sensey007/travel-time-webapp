@@ -1,0 +1,58 @@
+# Cloud Build pipeline for Travel Time Web App
+# Trigger on pushes to main (configure via Cloud Build trigger settings).
+# Builds Docker image, pushes to Artifact Registry, deploys to Cloud Run.
+# Pre-requisite: create Artifact Registry repo and Secret Manager secret 'maps-api-key'.
+
+substitutions:
+  _SERVICE_NAME: "travel-time-webapp"
+  _REGION: "us-central1"
+  _REPO: "travel-time-repo"
+  _MIN_INSTANCES: "1"
+  _MAX_INSTANCES: "10"
+  _CONCURRENCY: "80"
+  _MEMORY: "512Mi"
+  _CPU: "1"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    id: "Build image"
+    env:
+      - "COMMIT_SHA=$COMMIT_SHA"
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/webapp:$SHORT_SHA"
+      - "--build-arg"
+      - "COMMIT_SHA=$COMMIT_SHA"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "Push image"
+    args:
+      - "push"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/webapp:$SHORT_SHA"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "Deploy Cloud Run"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        gcloud run deploy ${_SERVICE_NAME} \
+          --image ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/webapp:$SHORT_SHA \
+          --region ${_REGION} \
+          --allow-unauthenticated \
+          --set-secrets MAPS_API_KEY=maps-api-key:latest \
+          --set-env-vars LOG_LEVEL=info,NODE_ENV=production,APP_VERSION=$SHORT_SHA,COMMIT_SHA=$COMMIT_SHA \
+          --min-instances=${_MIN_INSTANCES} --max-instances=${_MAX_INSTANCES} \
+          --concurrency=${_CONCURRENCY} --memory=${_MEMORY} --cpu=${_CPU} --timeout=60s
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/webapp:$SHORT_SHA"
+
+# Optionally add test steps (curl healthz) with Cloud Run staging URL if using staged deploy.
+# To add a manual approval before production, create separate staging service and promotion step.
+

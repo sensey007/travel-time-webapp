@@ -1,0 +1,26 @@
+{
+  "name": "travel-time-webapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web app to display travel time/routes on XRE device via deep link parameters using Google Maps APIs.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
+    "lint": "eslint src --ext .js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.3"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.57.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.29.0",
+    "eslint-plugin-n": "^16.6.2",
+    "eslint-plugin-promise": "^6.1.1",
+    "supertest": "^6.3.3"
+  }
+}
