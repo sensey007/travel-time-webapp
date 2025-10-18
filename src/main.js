@@ -1,9 +1,16 @@
 /* global google */
+console.log('DEBUG: main.js starting to load');
 import { parseDeepLink } from './params.js';
+console.log('DEBUG: parseDeepLink imported');
 import { loadGoogleMaps, initMap } from './map.js';
+console.log('DEBUG: map functions imported');
 import { detectIntent } from './intent.js';
+console.log('DEBUG: detectIntent imported');
 import { getMockRestaurants } from './restaurants.js';
+console.log('DEBUG: getMockRestaurants imported');
 import { computeAppointmentPlan } from './appointment.js';
+console.log('DEBUG: computeAppointmentPlan imported');
+console.log('DEBUG: All imports completed');
 
 const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
@@ -41,7 +48,9 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
 }
 
 (async function bootstrap () {
+  console.log('DEBUG: bootstrap function starting');
   const cfg = parseDeepLink(window.location.search);
+  console.log('DEBUG: parseDeepLink completed, config:', cfg);
   if (cfg.warnings.length) {
     statusEl.innerHTML = cfg.warnings.map(w => `<div class='warn'>${w}</div>`).join('');
   } else {

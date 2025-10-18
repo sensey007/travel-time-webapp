@@ -109,6 +109,56 @@ app.get('/healthz', (req, res) => {
   });
 });
 
+// Debug endpoint for STB compatibility diagnostics
+app.get('/debug', (req, res) => {
+  const staticPath = process.env.NODE_ENV === 'production' && fs.existsSync(path.join(__dirname, 'dist')) 
+    ? path.join(__dirname, 'dist') 
+    : path.join(__dirname, 'src');
+  
+  res.json({
+    nodeEnv: process.env.NODE_ENV,
+    staticPath: staticPath,
+    distExists: fs.existsSync(path.join(__dirname, 'dist')),
+    srcExists: fs.existsSync(path.join(__dirname, 'src')),
+    mainJsExists: fs.existsSync(path.join(staticPath, 'main.js')),
+    indexHtmlExists: fs.existsSync(path.join(__dirname, 'src', 'index.html')),
+    timestamp: new Date().toISOString(),
+    userAgent: req.headers['user-agent'] || 'unknown'
+  });
+});
+
+// Debug endpoint to check file contents
+app.get('/debug/main.js', (req, res) => {
+  const staticPath = process.env.NODE_ENV === 'production' && fs.existsSync(path.join(__dirname, 'dist')) 
+    ? path.join(__dirname, 'dist') 
+    : path.join(__dirname, 'src');
+  
+  const mainJsPath = path.join(staticPath, 'main.js');
+  
+  if (!fs.existsSync(mainJsPath)) {
+    return res.status(404).json({ error: 'main.js not found', path: mainJsPath });
+  }
+  
+  try {
+    const content = fs.readFileSync(mainJsPath, 'utf8');
+    const lines = content.split('\n');
+    const firstFewLines = lines.slice(0, 10).map((line, i) => `${i + 1}: ${line}`);
+    const hasOptionalChaining = content.includes('?.');
+    
+    res.json({
+      path: mainJsPath,
+      size: content.length,
+      lines: lines.length,
+      firstFewLines: firstFewLines,
+      hasOptionalChaining: hasOptionalChaining,
+      optionalChainingCount: (content.match(/\?\./g) || []).length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read file', message: err.message });
+  }
+});
+
 function injectApiKey (html) {
   const envKey = getApiKey();
   if (envKey) html = html.replace(/__GOOGLE_MAPS_API_KEY__/g, envKey);
