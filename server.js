@@ -222,14 +222,20 @@ app.get('/api/qr', async (req, res) => {
 // Static map endpoints
 app.get('/api/staticmap/travel', async (req, res) => {
   try {
-    const { origin, destination, mode = 'driving', size = '1024x768', scale = '1', redirect } = req.query;
+    const { origin, destination, mode = 'driving', size = '1024x768', scale = '1', redirect, zoom, maptype = 'roadmap' } = req.query;
     if (!origin || !destination) return res.status(400).json({ error: 'origin and destination required' });
+    // Parse zoom & maptype similar to food endpoint
+    let zoomVal = null; if (zoom && /^\d+$/.test(String(zoom))) { const z = parseInt(zoom, 10); if (z >= 3 && z <= 21) zoomVal = z; }
+    const allowedMapTypes = new Set(['roadmap','satellite','terrain','hybrid']);
+    const maptypeUsed = allowedMapTypes.has(String(maptype).toLowerCase()) ? String(maptype).toLowerCase() : 'roadmap';
     const apiKey = getApiKey(); const noKey = !apiKey; const mock = noKey || (req.query.mock === 'true');
     const { params, sizeUsed, scaleUsed } = buildBaseStaticMapParams(size, scale);
-    let meta = { origin, destination, mode: String(mode).toLowerCase(), sizeRequested: size, sizeUsed, scaleRequested: scale, scaleUsed, providerStatus: mock ? (noKey ? 'NO_KEY_MOCK' : 'MOCK') : null };
+    params.set('maptype', maptypeUsed); // override default if provided
+    let meta = { origin, destination, mode: String(mode).toLowerCase(), sizeRequested: size, sizeUsed, scaleRequested: scale, scaleUsed, zoomRequested: zoom || null, zoomUsed: zoomVal, maptypeRequested: maptype, maptypeUsed, providerStatus: mock ? (noKey ? 'NO_KEY_MOCK' : 'MOCK') : null };
     if (mock) {
       params.set('center', origin);
-      params.append('markers', 'color:gray|label:A|' + origin);
+      if (zoomVal) params.set('zoom', String(zoomVal));
+      params.append('markers', 'color:green|label:A|' + origin);
       params.append('markers', 'color:red|label:B|' + destination);
       const urlStatic = finalizeStaticUrl(params, apiKey, true);
       if (redirect === '1') return res.redirect(urlStatic);
@@ -238,13 +244,35 @@ app.get('/api/staticmap/travel', async (req, res) => {
     const dirParams = new URLSearchParams({ origin, destination, mode: meta.mode, language: 'en', key: apiKey });
     const dirUrl = 'https://maps.googleapis.com/maps/api/directions/json?' + dirParams.toString();
     const dirResp = await fetch(dirUrl); const dirJson = await dirResp.json();
-    if (dirJson.status !== 'OK' || !dirJson.routes?.length) return res.status(502).json({ error: 'Directions API error', providerStatus: dirJson.status, meta });
+    if (dirJson.status !== 'OK' || !dirJson.routes?.length) {
+      // Graceful fallback: still produce a static map with simple markers at textual locations (no geocode attempt) so client gets an image.
+      meta.providerStatus = dirJson.status || 'DIR_ERROR';
+      params.set('center', origin);
+      if (zoomVal) params.set('zoom', String(zoomVal));
+      params.append('markers', 'color:green|label:A|' + origin);
+      params.append('markers', 'color:red|label:B|' + destination);
+      const fallbackUrl = finalizeStaticUrl(params, apiKey, false);
+      if (redirect === '1') return res.redirect(fallbackUrl);
+      return res.status(200).json({ status: 'FALLBACK', error: 'Directions API error', staticMapUrl: fallbackUrl, meta });
+    }
     const route = dirJson.routes[0]; const leg = route.legs[0];
     const startLoc = leg.start_location; const endLoc = leg.end_location;
     params.append('markers', 'color:green|label:A|' + startLoc.lat + ',' + startLoc.lng);
     params.append('markers', 'color:red|label:B|' + endLoc.lat + ',' + endLoc.lng);
-    if (route.overview_polyline?.points) params.append('path', 'enc:' + route.overview_polyline.points); else params.set('center', origin);
-    meta = { ...meta, distance: leg.distance, duration: leg.duration, start_address: leg.start_address, end_address: leg.end_address };
+    if (route.overview_polyline?.points) {
+      params.append('path', 'enc:' + route.overview_polyline.points);
+      if (zoomVal) {
+        // If zoom specified, set center to midpoint to honor user's zoom request.
+        const midLat = (startLoc.lat + endLoc.lat) / 2;
+        const midLng = (startLoc.lng + endLoc.lng) / 2;
+        params.set('center', midLat + ',' + midLng);
+        params.set('zoom', String(zoomVal));
+      }
+    } else {
+      params.set('center', origin);
+      if (zoomVal) params.set('zoom', String(zoomVal));
+    }
+    meta = { ...meta, distance: leg.distance, duration: leg.duration, start_address: leg.start_address, end_address: leg.end_address, providerStatus: dirJson.status };
     const urlStatic = finalizeStaticUrl(params, apiKey, false);
     if (redirect === '1') return res.redirect(urlStatic);
     return res.json({ status: 'OK', staticMapUrl: urlStatic, meta });
