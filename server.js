@@ -84,7 +84,11 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/static', express.static(path.join(__dirname, 'src')));
+// Serve transpiled files in production, source files in development
+const staticPath = process.env.NODE_ENV === 'production' && fs.existsSync(path.join(__dirname, 'dist')) 
+  ? path.join(__dirname, 'dist') 
+  : path.join(__dirname, 'src');
+app.use('/static', express.static(staticPath));
 
 // Health endpoint
 app.get('/healthz', (req, res) => {

@@ -37,6 +37,8 @@
 - **Build Command**: (оставить пустым, Dockerfile все сделает)
 - **Start Command**: (оставить пустым, Dockerfile все сделает)
 
+**Важно**: Проект настроен для автоматической транспиляции JavaScript кода для совместимости со старыми браузерами (включая STB устройства). Это решает проблему `SyntaxError: Unexpected token '.'` которая возникает из-за использования optional chaining (`?.`) в современном JavaScript.
+
 **Переменные окружения (Environment Variables):**
 ```
 MAPS_API_KEY=ваш_google_maps_api_ключ

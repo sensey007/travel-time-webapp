@@ -4,10 +4,13 @@ WORKDIR /app
 
 # Install dependencies separately for better caching
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev || npm install --omit=dev
+RUN npm install
 
 # Copy application source
 COPY . .
+
+# Build transpiled JavaScript for compatibility with older browsers
+RUN npm run build
 
 ENV NODE_ENV=production
 EXPOSE 3000
