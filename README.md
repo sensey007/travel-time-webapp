@@ -270,5 +270,85 @@ Security / quota tips:
 - Keep using proxy endpoints so the key is never in initial deep link.
 - Add rate limiting if these endpoints become primary path (same pattern as /api/directions).
 
+### Client-Side Static Map Mode (forceStatic)
+For devices where the interactive Google Maps JS layer fails (black map area, CSP restrictions, missing WebGL), the client can be forced to skip loading the JS API and always show a server‑proxied Static Maps image.
+
+Enable by adding either `static=1` or `forceStatic=1` to the deep link:
+```
+/tt?origin=Philadelphia,PA&destination=JFK%20Airport&mode=driving&useProxy=true&static=1
+```
+Behavior:
+- Skips loading the Google Maps JavaScript API.
+- Uses `/api/staticmap/travel/image` (or `food` / `appointment` variant) to fetch a PNG image sized to the container.
+- Automatically falls back to static if interactive map load throws an error (no key, script blocked, etc.).
+- NearbyFood intent always renders a static image now (simpler & more reliable for STB).
+
+Appointment example (static forced):
+```
+/tt?origin=Philadelphia,PA&destination=Doctor%20Office&mode=driving&apptTime=2025-10-20T14:30:00-04:00&bufferMin=10&useProxy=true&forceStatic=1
+```
+NearbyFood example:
+```
+/tt?origin=Philadelphia,PA&destination=restaurants%20near%20me&cuisine=italian&useProxy=true&static=1
+```
+If `static=1` is omitted the app will attempt interactive mode first; on failure it still loads a static image (automatic fallback).
+
+Image sizing: the client picks a size close to the rendered panel (`<=1280x1280`) to optimize clarity. Adjust by supplying your own `size` to the server image endpoints if embedding externally.
+
+Performance considerations:
+- Static images avoid heavy JS parsing & layout on constrained devices.
+- Each image request is cached briefly (30s server in‑memory) to reduce duplicate fetches during quick navigation.
+- Use `redirect=1` with JSON endpoints if embedding outside the main UI.
+
+Security / key handling: forceStatic mode still never exposes the API key in the deep link; key remains server‑side.
+
 ---
 
+## GitHub Usage & SSH (Quick Guide)
+If you see `Permission denied (publickey)` or `Permission to sensey007/travel-time-webapp.git denied to ydmytr076_comcast` you are authenticating as the wrong GitHub user.
+
+1. Generate an ed25519 key (already done). If you saved it as `private_key` in the project folder, move it into `~/.ssh` for consistency:
+```bash
+mv private_key private_key.pub ~/.ssh/
+chmod 600 ~/.ssh/private_key
+chmod 644 ~/.ssh/private_key.pub
+```
+2. Add public key to GitHub (logged in as `sensey007`):
+```bash
+pbcopy < ~/.ssh/private_key.pub  # copies key to clipboard
+# GitHub > Settings > SSH and GPG keys > New SSH key > Paste clipboard
+```
+3. Create / edit `~/.ssh/config` to ensure this key is used:
+```
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/private_key
+  AddKeysToAgent yes
+  IdentitiesOnly yes
+```
+4. Start agent & add key:
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/private_key
+```
+5. Test auth:
+```bash
+ssh -T git@github.com
+# Expect: Hi sensey007! You've successfully authenticated...
+```
+6. Set remote (inside repo):
+```bash
+git remote remove origin 2>/dev/null || true
+git remote add origin git@github.com:sensey007/travel-time-webapp.git
+git fetch origin
+```
+7. Commit & push:
+```bash
+git add .
+git commit -m "Initial import with static map mode"
+git push -u origin main
+```
+If using IntelliJ IDEA, switch GitHub account: `Settings/Preferences > Version Control > GitHub > - remove old account - Add account (Log In via Browser)` then retry push.
+
+---

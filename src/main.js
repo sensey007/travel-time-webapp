@@ -41,11 +41,108 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
       const label = intentInfo.isNearbyFood ? 'Google Maps Search' : 'Google Maps Directions';
       gmapsShareEl.innerHTML = `<div class='panel-title'>Open in Google Maps</div>` +
         `<div class='qr-pair'>` +
-        `<div class='qr-box'><div style='font-size:12px;font-weight:600'>${label}</div><img alt='Google Maps QR' src='${data.dataUrl}'/><small>${externalUrl.replace(/^https?:\/\//,'').slice(0,60)}${externalUrl.length>60?'…':''}</small><small style='opacity:.5'>Scan to open native app / browser</small></div>` +
+        `<div class='qr-box'><div style='font-size:12px;font-weight:600'>${label}</div><img alt='Google Maps QR' src='${data.dataUrl}'/><small>${externalUrl.replace(/^https?:\/\//,'').slice(0,60)}${externalUrl.length>60?'\u2026':''}</small><small style='opacity:.5'>Scan to open native app / browser</small></div>` +
         `</div>`;
     }
   } catch { /* ignore */ }
 }
+
+// --- Static Map Helpers (new) -------------------------------------------------
+function desiredStaticSize () {
+  // Try to approximate container size while staying within API limits
+  const w = Math.min(1280, Math.max(400, Math.round(mapEl.clientWidth || 1024))); // clamp
+  const h = Math.min(1280, Math.max(300, Math.round(mapEl.clientHeight || 768)));
+  return `${w}x${h}`;
+}
+function imgHtml (src, alt = 'Map') {
+  return `<img src='${src}' alt='${alt}' style='width:100%;height:100%;object-fit:cover;display:block' onerror="this.style.opacity='0.4';this.alt='Map load error'"/>`;
+}
+async function loadStaticTravelMap (cfg) {
+  console.log('DEBUG: Loading static travel map');
+  const size = desiredStaticSize();
+  const url = `/api/staticmap/travel/image?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&mode=${encodeURIComponent(cfg.mode)}&size=${encodeURIComponent(size)}`;
+  console.log('DEBUG: Static travel map URL:', url);
+  try {
+    mapEl.innerHTML = `<div style='position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#888'>Loading static map...</div>`;
+    const img = new Image();
+    img.src = url;
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error('Static travel map failed')); });
+    console.log('DEBUG: Static travel map loaded successfully');
+    mapEl.innerHTML = imgHtml(url, 'Travel Map');
+  } catch (e) {
+    console.log('DEBUG: Static travel map error:', e.message);
+    mapEl.innerHTML = `<div style='padding:16px;color:#f77;font-size:14px'>Static map error: ${e.message}</div>`;
+  }
+}
+async function loadStaticFoodMap (cfg, intentInfo, resultsCount) {
+  console.log('DEBUG: Loading static food map');
+  const size = desiredStaticSize();
+  const cuisineParam = intentInfo.cuisine ? `&cuisine=${encodeURIComponent(intentInfo.cuisine)}` : '';
+  const url = `/api/staticmap/food/image?origin=${encodeURIComponent(cfg.origin)}${cuisineParam}&limit=${resultsCount || 9}&size=${encodeURIComponent(size)}`;
+  console.log('DEBUG: Static food map URL:', url);
+  try {
+    mapEl.innerHTML = `<div style='position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#888'>Loading static food map...</div>`;
+    const img = new Image();
+    img.src = url;
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error('Static food map failed')); });
+    console.log('DEBUG: Static food map loaded successfully');
+    mapEl.innerHTML = imgHtml(url, 'Nearby Food Map');
+  } catch (e) {
+    console.log('DEBUG: Static food map error:', e.message);
+    mapEl.innerHTML = `<div style='padding:16px;color:#f77;font-size:14px'>Static food map error: ${e.message}</div>`;
+  }
+}
+async function loadStaticAppointmentMap (cfg) {
+  console.log('DEBUG: Loading static appointment map');
+  if (!cfg.apptTime) { 
+    console.log('DEBUG: No apptTime provided for appointment map');
+    mapEl.innerHTML = `<div style='padding:16px;color:#bbb'>No apptTime provided</div>`; 
+    return; 
+  }
+  const size = desiredStaticSize();
+  const url = `/api/staticmap/appointment/image?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&apptTime=${encodeURIComponent(cfg.apptTime)}${cfg.bufferMin?`&bufferMin=${encodeURIComponent(cfg.bufferMin)}`:''}&size=${encodeURIComponent(size)}`;
+  console.log('DEBUG: Static appointment map URL:', url);
+  try {
+    mapEl.innerHTML = `<div style='position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#888'>Loading appointment map...</div>`;
+    const img = new Image(); img.src = url;
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error('Static appointment map failed')); });
+    console.log('DEBUG: Static appointment map loaded successfully');
+    mapEl.innerHTML = imgHtml(url, 'Appointment Map');
+  } catch (e) {
+    console.log('DEBUG: Static appointment map error:', e.message);
+    mapEl.innerHTML = `<div style='padding:16px;color:#f77;font-size:14px'>Static appointment map error: ${e.message}</div>`;
+  }
+}
+function shouldForceStatic () {
+  console.log('DEBUG: Checking if should force static mode');
+  
+  // Always force static for STB devices (detect by user agent)
+  const userAgent = navigator.userAgent || '';
+  const isSTB = /XRE|STB|Set-Top|Android TV|Smart TV|Comcast|Roku|Apple TV|Fire TV|Chromecast|WebOS|Tizen/i.test(userAgent);
+  console.log('DEBUG: User agent:', userAgent);
+  console.log('DEBUG: Is STB device:', isSTB);
+  
+  if (isSTB) {
+    console.log('DEBUG: STB device detected, forcing static mode');
+    return true;
+  }
+  
+  // Check URL parameters
+  const qs = window.location.search;
+  if (/[?&](static|forceStatic)=1/i.test(qs)) {
+    console.log('DEBUG: Static mode forced by URL parameter');
+    return true;
+  }
+  
+  // If interactive=1 present AND no forceStatic flags -> allow interactive
+  const interactiveRequested = /[?&]interactive=1/i.test(qs);
+  console.log('DEBUG: Interactive mode requested:', interactiveRequested);
+  
+  const result = !interactiveRequested; // force static when not explicitly requested
+  console.log('DEBUG: Should force static:', result);
+  return result;
+}
+// -----------------------------------------------------------------------------
 
 (async function bootstrap () {
   console.log('DEBUG: bootstrap function starting');
@@ -54,7 +151,7 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
   if (cfg.warnings.length) {
     statusEl.innerHTML = cfg.warnings.map(w => `<div class='warn'>${w}</div>`).join('');
   } else {
-    statusEl.textContent = 'Loading map…';
+    statusEl.textContent = 'Loading map\u2026';
   }
   if (!cfg.origin || !cfg.destination) {
     statusEl.classList.remove('loading');
@@ -63,76 +160,43 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
     return;
   }
   try {
-    const noMap = /[?&]noMap=1/.test(window.location.search);
+    const forceStatic = shouldForceStatic();
+    console.log('DEBUG: forceStatic result:', forceStatic);
+    
+    // Determine whether interactive explicitly requested AND not forced static
+    const interactiveRequested = /[?&]interactive=1/i.test(window.location.search) && !forceStatic;
+    console.log('DEBUG: interactiveRequested result:', interactiveRequested);
     const injected = document.getElementById('gmaps-script-template').textContent;
     let injectedKey = null;
     try { injectedKey = JSON.parse(injected).key; } catch { /* ignore */ }
     const apiKey = injectedKey && injectedKey !== '__GOOGLE_MAPS_API_KEY__' ? injectedKey : cfg.apiKey;
     const mockMode = (!apiKey) && cfg.useProxy && /[?&]mock=true/.test(window.location.search);
-    if (noMap) {
-      mapEl.innerHTML = '<div style="padding:16px;color:#bbb;font-size:14px">Map disabled (noMap=1)</div>';
-    } else {
-      if (!apiKey && !mockMode) throw new Error('No Google Maps API key provided (server env MAPS_API_KEY or apiKey query param). For mock mode append &mock=true&useProxy=true or add noMap=1');
-      if (!mockMode) {
-        try {
+
+    let mapCtl = null; // we will keep old logic if interactive allowed
+    let interactiveEnabled = false;
+    // Removed undefined noMap check; STB always starts in static mode unless interactive requested
+    try {
+      if (interactiveRequested) {
+        if (!apiKey && !mockMode) throw new Error('No Google Maps API key provided');
+        if (!mockMode) {
           await loadGoogleMaps(apiKey, cfg.lang);
-          // Additional check for STB compatibility
-          if (typeof google === 'undefined' || !google || !google.maps) {
-            throw new Error('Google Maps API not available on this device');
-          }
-        } catch (e) {
-          console.warn('Google Maps API failed:', e.message);
-          mapEl.innerHTML = '<div style="padding:16px;color:#f77;font-size:14px">Map load failed; using text mode</div>';
+          if (typeof google === 'undefined' || !google || !google.maps) throw new Error('Google Maps API not available');
+          mapCtl = initMap(mapEl, cfg);
+          interactiveEnabled = true;
         }
-      } else {
-        mapEl.innerHTML = '<div style="padding:16px;color:#bbb;font-size:14px">Mock Map (no Google Maps API key)</div>';
       }
-    }
-    // Create map controller with fallback for STB devices
-    let mapCtl;
-    if (noMap || mockMode || typeof google === 'undefined' || !google || !google.maps) {
-      mapCtl = { 
-        decodePolyline: () => [], 
-        map: null, 
-        route: async () => ({ 
-          routes: [{ 
-            legs: [{ 
-              start_address: cfg.origin, 
-              end_address: cfg.destination, 
-              distance: { text: '120 km', value: 120000 }, 
-              duration: { text: '1 hour 25 mins', value: 5100 } 
-            }] 
-          }] 
-        }) 
-      };
-    } else {
-      try {
-        mapCtl = initMap(mapEl, cfg);
-      } catch (e) {
-        console.warn('Map initialization failed:', e.message);
-        mapCtl = { 
-          decodePolyline: () => [], 
-          map: null, 
-          route: async () => ({ 
-            routes: [{ 
-              legs: [{ 
-                start_address: cfg.origin, 
-                end_address: cfg.destination, 
-                distance: { text: '120 km', value: 120000 }, 
-                duration: { text: '1 hour 25 mins', value: 5100 } 
-              }] 
-            }] 
-          }) 
-        };
-      }
+    } catch (e) {
+      console.warn('Interactive map disabled (fallback static):', e.message);
+      interactiveEnabled = false;
     }
 
     const intentInfo = detectIntent(cfg);
     const externalMapsUrl = buildGoogleMapsExternalUrl(cfg, intentInfo);
-    // For NearbyFood we can start external QR early (non-blocking)
-    renderExternalMapsQR(externalMapsUrl, intentInfo);
+    renderExternalMapsQR(externalMapsUrl, intentInfo); // QR always available
+
+    // Nearby food intent: we render restaurants + static map (always static for simplicity)
     if (intentInfo.isNearbyFood) {
-      statusEl.textContent = 'Loading nearby restaurants…';
+      statusEl.textContent = 'Loading nearby restaurants\u2026';
       const suppressionMsg = `<div class='warn' style='margin-top:4px'>Route suppressed for NearbyFood intent</div>`;
       try {
         const foodUrl = `/api/food?origin=${encodeURIComponent(cfg.origin)}${intentInfo.cuisine ? `&cuisine=${encodeURIComponent(intentInfo.cuisine)}` : ''}${mockMode ? '&mock=true' : ''}`;
@@ -140,59 +204,44 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
         const foodData = await foodResp.json();
         if (foodResp.ok && foodData.results?.length) {
           const list = foodData.results;
-          foodEl.style.display = 'block';
-          const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
-          const sourceBadge = foodData.source === 'cache' ? "<span style='font-size:11px;opacity:.6'>(cache)</span>" : '';
-          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
-            list.map(r => `<div class='restaurant-item'>• <strong>${r.name}</strong>${r.rating ? ` ⭐ ${r.rating}` : ''}${r.user_ratings_total ? ` (${r.user_ratings_total})` : ''}<br/><span style='opacity:.8'>${r.vicinity || ''}</span></div>`).join('');
-          // Map markers
-          if (!mockMode && mapCtl.map && typeof google !== 'undefined' && google && google.maps) {
-            try {
-              const bounds = new google.maps.LatLngBounds();
-              list.forEach(r => { if (r.location?.lat && r.location?.lng) { const pos = { lat: r.location.lat, lng: r.location.lng }; bounds.extend(pos); new google.maps.Marker({ map: mapCtl.map, position: pos, title: r.name }); } });
-              if (foodData.clusterCenter?.lat && foodData.clusterCenter?.lng) {
-                const cc = { lat: foodData.clusterCenter.lat, lng: foodData.clusterCenter.lng };
-                bounds.extend(cc);
-                new google.maps.Marker({ map: mapCtl.map, position: cc, title: 'Cluster Center', icon: { path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW, scale: 6, fillColor: '#4dabf7', fillOpacity: 0.95, strokeColor: '#1c7ed6', strokeWeight: 1 } });
-                if (foodData.clusterDistance?.meters) {
-                  const radius = Math.min(Math.max(foodData.clusterDistance.meters, 200), 5000);
-                  new google.maps.Circle({ map: mapCtl.map, center: cc, radius, strokeColor: '#4dabf7', strokeOpacity: 0.6, strokeWeight: 1, fillColor: '#1971c2', fillOpacity: 0.08 });
-                }
-              }
-              try { const geocoder = new google.maps.Geocoder(); geocoder.geocode({ address: cfg.origin }, (results, status) => { if (status === 'OK' && results[0]) { const loc = results[0].geometry.location; new google.maps.Marker({ map: mapCtl.map, position: loc, title: cfg.origin, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: '#51cf66', fillOpacity: 0.9, strokeColor: '#2b8a3e', strokeWeight: 1 } }); if (bounds.isEmpty()) bounds.extend(loc); } }); } catch {}
-              if (!bounds.isEmpty()) { mapCtl.map.fitBounds(bounds); google.maps.event.addListenerOnce(mapCtl.map, 'bounds_changed', () => { if (mapCtl.map.getZoom() > 16) mapCtl.map.setZoom(16); }); }
-            } catch (mapError) {
-              console.warn('Google Maps rendering failed:', mapError.message);
-            }
-          }
-          summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Showing nearby ${intentInfo.cuisine || 'restaurants'}` + suppressionMsg;
+            foodEl.style.display = 'block';
+            const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
+            const sourceBadge = foodData.source === 'cache' ? "<span style='font-size:11px;opacity:.6'>(cache)</span>" : '';
+            foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
+              list.map(r => `<div class='restaurant-item'>\u2022 <strong>${r.name}</strong>${r.rating ? ` \u2b50 ${r.rating}` : ''}${r.user_ratings_total ? ` (${r.user_ratings_total})` : ''}<br/><span style='opacity:.8'>${r.vicinity || ''}</span></div>`).join('');
+            summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Showing nearby ${intentInfo.cuisine || 'restaurants'}` + suppressionMsg;
+            // Always static map
+            await loadStaticFoodMap(cfg, intentInfo, list.length);
         } else {
           const ps = foodData?.providerStatus || foodData?.error || 'UNKNOWN';
           const providerMsg = foodData?.providerRaw?.error_message;
           const list = getMockRestaurants(intentInfo.cuisine);
           foodEl.style.display = 'block';
           foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` +
-            list.map(r => `<div class='restaurant-item'>• ${r}</div>`).join('');
+            list.map(r => `<div class='restaurant-item'>\u2022 ${r}</div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Showing mock ${intentInfo.cuisine || 'restaurants'} (API error ${ps})` + suppressionMsg;
           statusEl.innerHTML = `<div class='warn'>Places API fallback (status ${ps})${providerMsg ? `: ${providerMsg}` : ''}</div>`;
+          await loadStaticFoodMap(cfg, intentInfo, list.length);
         }
       } catch (e) {
         const list = getMockRestaurants(intentInfo.cuisine);
         foodEl.style.display = 'block';
-        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r => `<div class='restaurant-item'>• ${r}</div>`).join('');
+        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r => `<div class='restaurant-item'>\u2022 ${r}</div>`).join('');
         summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Showing mock ${intentInfo.cuisine || 'restaurants'} (exception)` + suppressionMsg;
         statusEl.innerHTML = `<div class='warn'>Exception loading Places: ${e.message}</div>`;
+        await loadStaticFoodMap(cfg, intentInfo, list.length);
       }
       statusEl.textContent = 'Ready';
       statusEl.classList.remove('loading');
-      return;
+      return; // done for food intent
     }
 
+    // Travel or appointment intent
     let leg;
-    let trafficData = null; // single fetch traffic info
+    let trafficData = null;
 
     if (cfg.useProxy) {
-      statusEl.textContent = 'Fetching route (server proxy)…';
+      statusEl.textContent = 'Fetching route (server proxy)\u2026';
       const proxyUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
       const resp = await fetch(proxyUrl);
       const data = await resp.json().catch(() => ({}));
@@ -201,14 +250,6 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
         throw new Error(`Directions API error (providerStatus=${providerStatus})`);
       }
       leg = { start_address: data.origin, end_address: data.destination, distance: data.distance, duration: data.duration };
-      if (data.polyline && window.google && mapCtl.map) {
-        const path = mapCtl.decodePolyline(data.polyline).map(p => ({ lat: p.lat, lng: p.lng }));
-        const poly = new google.maps.Polyline({ path, strokeColor: '#4285F4', strokeOpacity: 0.8, strokeWeight: 5 });
-        poly.setMap(mapCtl.map);
-        const bounds = new google.maps.LatLngBounds();
-        path.forEach(pt => bounds.extend(pt));
-        mapCtl.map.fitBounds(bounds);
-      }
       if (cfg.traffic) {
         try {
           const mUrl = `/api/matrix?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
@@ -217,24 +258,37 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
           if (mResp.ok) trafficData = mData; else console.warn('Matrix error', mData);
         } catch (e) { /* ignore traffic error */ }
       }
-    } else {
+    } else if (interactiveEnabled && mapCtl) {
+      // interactive route (will still display static afterwards for STB consistency if forceStatic)
       const result = await mapCtl.route(cfg.mode);
       leg = result.routes[0].legs[0];
+    } else {
+      // fallback mock leg
+      leg = { start_address: cfg.origin, end_address: cfg.destination, distance: { text: '120 km', value: 120000 }, duration: { text: '1 hour 25 mins', value: 5100 } };
     }
 
+    // Summary
     if (trafficData && trafficData.durationInTraffic) {
       const trafficTxt = trafficData.durationInTraffic.text;
-      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> → <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Base: ${leg.duration.text} | Traffic: ${trafficTxt}`;
+      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Base: ${leg.duration.text} | Traffic: ${trafficTxt}`;
     } else {
-      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> → <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
+      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
     }
 
-    // For TravelTime intent, ensure external QR rendered (if not already)
-    if (!intentInfo.isNearbyFood) {
-      renderExternalMapsQR(externalMapsUrl, intentInfo);
+    // Static map selection
+    console.log('DEBUG: Selecting static map type');
+    console.log('DEBUG: Intent:', intentInfo.intent);
+    console.log('DEBUG: Has apptTime:', !!cfg.apptTime);
+    
+    if (intentInfo.intent === 'AppointmentLeaveTime' && cfg.apptTime) {
+      console.log('DEBUG: Loading appointment static map');
+      await loadStaticAppointmentMap(cfg);
+    } else {
+      console.log('DEBUG: Loading travel static map');
+      await loadStaticTravelMap(cfg);
     }
 
-    // AppointmentLeaveTime handling
+    // Appointment panel (unchanged logic) - still useful even with static map
     if (intentInfo.intent === 'AppointmentLeaveTime' && cfg.apptTime) {
       const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
       const plan = computeAppointmentPlan(cfg.apptTime, durationSec, cfg.bufferMin);
@@ -256,9 +310,9 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
           const now = Date.now();
           const leaveIn = Math.floor((new Date(plan.departTimeISO).getTime() - now)/1000);
           const apptIn = Math.floor((new Date(plan.apptTimeISO).getTime() - now)/1000);
-            const statusEl2 = document.getElementById('apptStatus');
-            if (leaveIn <= 0 && apptIn > 0) { statusEl2.innerHTML = '<strong>Status:</strong> LeaveNow'; }
-            if (apptIn <= 0) { statusEl2.innerHTML = '<strong>Status:</strong> Late'; }
+          const statusEl2 = document.getElementById('apptStatus');
+          if (leaveIn <= 0 && apptIn > 0) { statusEl2.innerHTML = '<strong>Status:</strong> LeaveNow'; }
+          if (apptIn <= 0) { statusEl2.innerHTML = '<strong>Status:</strong> Late'; }
           const cdEl = document.getElementById('apptCountdown');
           if (cdEl) {
             if (apptIn <= 0) cdEl.textContent = 'Appointment time reached';
@@ -278,5 +332,9 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
     statusEl.classList.remove('loading');
     statusEl.classList.add('error');
     statusEl.textContent = 'Error: ' + err.message;
+    // Provide static fallback if not already present
+    if (!mapEl.querySelector('img')) {
+      mapEl.innerHTML = `<div style='padding:16px;color:#f77;font-size:14px'>Map unavailable</div>`;
+    }
   }
 })();
