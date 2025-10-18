@@ -76,3 +76,47 @@ npm run serve:built
 3. Откройте приложение в старом браузере или эмуляторе
 
 Теперь приложение должно работать без ошибок `SyntaxError: Unexpected token '.'` в STB устройствах.
+
+## Дополнительные исправления для STB совместимости
+
+### Исправление ошибки "ReferenceError: Can't find variable: google"
+
+Добавлена дополнительная защита от ошибок Google Maps API:
+
+1. **Безопасная проверка Google Maps API:**
+   ```javascript
+   // Было:
+   if (!mockMode && mapCtl.map && google?.maps) {
+   
+   // Стало:
+   if (!mockMode && mapCtl.map && typeof google !== 'undefined' && google && google.maps) {
+   ```
+
+2. **Дополнительная проверка после загрузки API:**
+   ```javascript
+   await loadGoogleMaps(apiKey, cfg.lang);
+   if (typeof google === 'undefined' || !google || !google.maps) {
+     throw new Error('Google Maps API not available on this device');
+   }
+   ```
+
+3. **Fallback для инициализации карты:**
+   - Если Google Maps API недоступен, используется mock режим
+   - Приложение продолжает работать в текстовом режиме
+   - Все функции маршрутизации работают через серверный API
+
+4. **Обертывание в try-catch:**
+   - Весь код работы с Google Maps API обернут в try-catch блоки
+   - Ошибки логируются, но не прерывают работу приложения
+
+5. **Версионирование статических файлов:**
+   - Добавлен параметр `?v=2` к main.js для предотвращения кэширования старых файлов
+   - STB устройства будут загружать обновленные файлы
+
+### Результат
+Теперь приложение:
+- ✅ Не выдает ошибки `SyntaxError: Unexpected token '.'`
+- ✅ Не выдает ошибки `ReferenceError: Can't find variable: google`
+- ✅ Работает в fallback режиме если Google Maps API недоступен
+- ✅ Автоматически переключается на текстовый режим на STB устройствах
+- ✅ Предотвращает кэширование старых файлов

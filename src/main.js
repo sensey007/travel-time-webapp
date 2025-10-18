@@ -67,14 +67,56 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
       if (!mockMode) {
         try {
           await loadGoogleMaps(apiKey, cfg.lang);
+          // Additional check for STB compatibility
+          if (typeof google === 'undefined' || !google || !google.maps) {
+            throw new Error('Google Maps API not available on this device');
+          }
         } catch (e) {
+          console.warn('Google Maps API failed:', e.message);
           mapEl.innerHTML = '<div style="padding:16px;color:#f77;font-size:14px">Map load failed; using text mode</div>';
         }
       } else {
         mapEl.innerHTML = '<div style="padding:16px;color:#bbb;font-size:14px">Mock Map (no Google Maps API key)</div>';
       }
     }
-    const mapCtl = (noMap || mockMode) ? { decodePolyline: () => [], map: null, route: async () => ({ routes: [ { legs: [ { start_address: cfg.origin, end_address: cfg.destination, distance: { text: '120 km', value: 120000 }, duration: { text: '1 hour 25 mins', value: 5100 } } ] } ] }) } : initMap(mapEl, cfg);
+    // Create map controller with fallback for STB devices
+    let mapCtl;
+    if (noMap || mockMode || typeof google === 'undefined' || !google || !google.maps) {
+      mapCtl = { 
+        decodePolyline: () => [], 
+        map: null, 
+        route: async () => ({ 
+          routes: [{ 
+            legs: [{ 
+              start_address: cfg.origin, 
+              end_address: cfg.destination, 
+              distance: { text: '120 km', value: 120000 }, 
+              duration: { text: '1 hour 25 mins', value: 5100 } 
+            }] 
+          }] 
+        }) 
+      };
+    } else {
+      try {
+        mapCtl = initMap(mapEl, cfg);
+      } catch (e) {
+        console.warn('Map initialization failed:', e.message);
+        mapCtl = { 
+          decodePolyline: () => [], 
+          map: null, 
+          route: async () => ({ 
+            routes: [{ 
+              legs: [{ 
+                start_address: cfg.origin, 
+                end_address: cfg.destination, 
+                distance: { text: '120 km', value: 120000 }, 
+                duration: { text: '1 hour 25 mins', value: 5100 } 
+              }] 
+            }] 
+          }) 
+        };
+      }
+    }
 
     const intentInfo = detectIntent(cfg);
     const externalMapsUrl = buildGoogleMapsExternalUrl(cfg, intentInfo);
@@ -95,20 +137,24 @@ async function renderExternalMapsQR (externalUrl, intentInfo) {
           foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
             list.map(r => `<div class='restaurant-item'>• <strong>${r.name}</strong>${r.rating ? ` ⭐ ${r.rating}` : ''}${r.user_ratings_total ? ` (${r.user_ratings_total})` : ''}<br/><span style='opacity:.8'>${r.vicinity || ''}</span></div>`).join('');
           // Map markers
-          if (!mockMode && mapCtl.map && google?.maps) {
-            const bounds = new google.maps.LatLngBounds();
-            list.forEach(r => { if (r.location?.lat && r.location?.lng) { const pos = { lat: r.location.lat, lng: r.location.lng }; bounds.extend(pos); new google.maps.Marker({ map: mapCtl.map, position: pos, title: r.name }); } });
-            if (foodData.clusterCenter?.lat && foodData.clusterCenter?.lng) {
-              const cc = { lat: foodData.clusterCenter.lat, lng: foodData.clusterCenter.lng };
-              bounds.extend(cc);
-              new google.maps.Marker({ map: mapCtl.map, position: cc, title: 'Cluster Center', icon: { path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW, scale: 6, fillColor: '#4dabf7', fillOpacity: 0.95, strokeColor: '#1c7ed6', strokeWeight: 1 } });
-              if (foodData.clusterDistance?.meters) {
-                const radius = Math.min(Math.max(foodData.clusterDistance.meters, 200), 5000);
-                new google.maps.Circle({ map: mapCtl.map, center: cc, radius, strokeColor: '#4dabf7', strokeOpacity: 0.6, strokeWeight: 1, fillColor: '#1971c2', fillOpacity: 0.08 });
+          if (!mockMode && mapCtl.map && typeof google !== 'undefined' && google && google.maps) {
+            try {
+              const bounds = new google.maps.LatLngBounds();
+              list.forEach(r => { if (r.location?.lat && r.location?.lng) { const pos = { lat: r.location.lat, lng: r.location.lng }; bounds.extend(pos); new google.maps.Marker({ map: mapCtl.map, position: pos, title: r.name }); } });
+              if (foodData.clusterCenter?.lat && foodData.clusterCenter?.lng) {
+                const cc = { lat: foodData.clusterCenter.lat, lng: foodData.clusterCenter.lng };
+                bounds.extend(cc);
+                new google.maps.Marker({ map: mapCtl.map, position: cc, title: 'Cluster Center', icon: { path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW, scale: 6, fillColor: '#4dabf7', fillOpacity: 0.95, strokeColor: '#1c7ed6', strokeWeight: 1 } });
+                if (foodData.clusterDistance?.meters) {
+                  const radius = Math.min(Math.max(foodData.clusterDistance.meters, 200), 5000);
+                  new google.maps.Circle({ map: mapCtl.map, center: cc, radius, strokeColor: '#4dabf7', strokeOpacity: 0.6, strokeWeight: 1, fillColor: '#1971c2', fillOpacity: 0.08 });
+                }
               }
+              try { const geocoder = new google.maps.Geocoder(); geocoder.geocode({ address: cfg.origin }, (results, status) => { if (status === 'OK' && results[0]) { const loc = results[0].geometry.location; new google.maps.Marker({ map: mapCtl.map, position: loc, title: cfg.origin, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: '#51cf66', fillOpacity: 0.9, strokeColor: '#2b8a3e', strokeWeight: 1 } }); if (bounds.isEmpty()) bounds.extend(loc); } }); } catch {}
+              if (!bounds.isEmpty()) { mapCtl.map.fitBounds(bounds); google.maps.event.addListenerOnce(mapCtl.map, 'bounds_changed', () => { if (mapCtl.map.getZoom() > 16) mapCtl.map.setZoom(16); }); }
+            } catch (mapError) {
+              console.warn('Google Maps rendering failed:', mapError.message);
             }
-            try { const geocoder = new google.maps.Geocoder(); geocoder.geocode({ address: cfg.origin }, (results, status) => { if (status === 'OK' && results[0]) { const loc = results[0].geometry.location; new google.maps.Marker({ map: mapCtl.map, position: loc, title: cfg.origin, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: '#51cf66', fillOpacity: 0.9, strokeColor: '#2b8a3e', strokeWeight: 1 } }); if (bounds.isEmpty()) bounds.extend(loc); } }); } catch {}
-            if (!bounds.isEmpty()) { mapCtl.map.fitBounds(bounds); google.maps.event.addListenerOnce(mapCtl.map, 'bounds_changed', () => { if (mapCtl.map.getZoom() > 16) mapCtl.map.setZoom(16); }); }
           }
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Showing nearby ${intentInfo.cuisine || 'restaurants'}` + suppressionMsg;
         } else {
