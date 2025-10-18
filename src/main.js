@@ -199,7 +199,7 @@ function shouldForceStatic () {
       statusEl.textContent = 'Loading nearby restaurants\u2026';
       const suppressionMsg = `<div class='warn' style='margin-top:4px'>Route suppressed for NearbyFood intent</div>`;
       try {
-        const foodUrl = `/api/food?origin=${encodeURIComponent(cfg.origin)}${intentInfo.cuisine ? `&cuisine=${encodeURIComponent(intentInfo.cuisine)}` : ''}${mockMode ? '&mock=true' : ''}`;
+        const foodUrl = `/api/staticmap/food?origin=${encodeURIComponent(cfg.origin)}${intentInfo.cuisine ? `&cuisine=${encodeURIComponent(intentInfo.cuisine)}` : ''}${mockMode ? '&mock=true' : ''}`;
         const foodResp = await fetch(foodUrl);
         const foodData = await foodResp.json();
         if (foodResp.ok && foodData.results?.length) {

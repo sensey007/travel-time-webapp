@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 import http from 'http';
 import { detectIntent } from './src/intent.js';
 import { parseAppointmentTimeFromText } from './src/appointmentTimeParser.js';
+import { getMockRestaurants } from './src/restaurants.js';
 
 // Added safeFetchJson helper (was missing) used by /api/staticmap/food for geocode and places calls
 async function safeFetchJson (targetUrl, label) {
@@ -460,6 +461,80 @@ app.get('/api/staticmap/appointment/image', async (req, res) => {
     res.setHeader('X-Map-Destination', maskValue(destination));
     res.send(buf);
   } catch (e) { log('error','staticmap_appt_image_exception',{ message: e.message }); return res.status(500).json({ error:'Internal error', message: e.message }); }
+});
+
+// Food restaurants endpoint (data only, no static map)
+app.get('/api/food', async (req, res) => {
+  try {
+    const { origin, cuisine = '', limit = '9' } = req.query;
+    if (!origin) return res.status(400).json({ error: 'origin required' });
+    const apiKey = getApiKey(); const noKey = !apiKey; const mock = noKey || (req.query.mock === 'true');
+    const max = Math.min(9, Math.max(1, parseInt(limit, 10) || 5));
+    const normCuisine = cuisine.trim().toLowerCase();
+    let meta = { origin, cuisine: normCuisine || null, limitRequested: limit, limitUsed: max, providerStatus: mock ? (noKey ? 'NO_KEY_MOCK':'MOCK') : null };
+    
+    if (mock) {
+      // Mock fallback path - return mock restaurants
+      const mockRestaurants = getMockRestaurants(normCuisine);
+      return res.json({ 
+        status: 'OK', 
+        mock: true, 
+        meta, 
+        results: mockRestaurants.map(name => ({ name, rating: 4.2, vicinity: 'Philadelphia, PA', user_ratings_total: 150 }))
+      });
+    }
+    
+    // Geocode origin (network guarded)
+    const geoUrl = 'https://maps.googleapis.com/maps/api/geocode/json?' + new URLSearchParams({ address: origin, key: apiKey }).toString();
+    const geoRes = await safeFetchJson(geoUrl, 'Geocode');
+    if (!geoRes.ok) {
+      return res.status(502).json({ error:'Geocode upstream error', detail: geoRes.error, providerStatus: geoRes.json?.status || null, meta });
+    }
+    const geoJson = geoRes.json;
+    if (geoJson.status !== 'OK' || !geoJson.results.length) return res.status(502).json({ error:'Geocode failed', providerStatus: geoJson.status, meta });
+    const loc = geoJson.results[0].geometry.location; meta.originLocation = loc;
+    
+    // Cache key
+    const ck = foodCacheKey(origin, normCuisine, max, null, 'roadmap');
+    let nearJson = foodGet(ck); let fromCache = !!nearJson;
+    if (!nearJson) {
+      const nearbyParams = new URLSearchParams({ location: loc.lat + ',' + loc.lng, radius:'5000', type:'restaurant', key: apiKey });
+      if (normCuisine) nearbyParams.set('keyword', normCuisine + ' restaurant');
+      const nearbyUrl = 'https://maps.googleapis.com/maps/api/place/nearbysearch/json?' + nearbyParams.toString();
+      const nearRes = await safeFetchJson(nearbyUrl, 'PlacesNearby');
+      if (!nearRes.ok) {
+        return res.status(502).json({ error:'Places nearby upstream error', detail: nearRes.error, providerStatus: nearRes.json?.status || null, meta });
+      }
+      nearJson = nearRes.json;
+      if (nearJson.status === 'OK') foodSet(ck, nearJson);
+    }
+    if (nearJson.status !== 'OK') return res.status(502).json({ error:'Places nearby failed', providerStatus: nearJson.status, meta });
+    
+    // Extended results
+    const rawResults = (nearJson.results || []).map(r => ({
+      name: r.name,
+      rating: r.rating,
+      user_ratings_total: r.user_ratings_total,
+      vicinity: r.vicinity,
+      place_id: r.place_id,
+      price_level: r.price_level,
+      open_now: r.opening_hours ? r.opening_hours.open_now : null,
+      location: r.geometry?.location || null
+    })).sort((a,b)=>(b.rating||0)-(a.rating||0)).slice(0, max);
+    
+    meta.providerStatus = nearJson.status; meta.resultsCount = rawResults.length; meta.source = fromCache ? 'cache':'live';
+    
+    // Cluster center & distance
+    if (rawResults.length > 0) {
+      let sumLat=0,sumLng=0,count=0; rawResults.forEach(r=>{ if(r.location && typeof r.location.lat==='number' && typeof r.location.lng==='number'){ sumLat+=r.location.lat; sumLng+=r.location.lng; count++; }});
+      if (count>0) { const cLat=sumLat/count; const cLng=sumLng/count; meta.clusterCenter={ lat:cLat, lng:cLng }; const distM=haversineMeters(loc.lat, loc.lng, cLat, cLng); if(distM!=null) meta.clusterDistance={ value:distM, text:formatMeters(distM) }; }
+    }
+    
+    return res.json({ status:'OK', meta, results: rawResults });
+  } catch (e) {
+    log('error','food_api_exception',{ message: e.message, stack: e.stack });
+    return res.status(500).json({ error:'Internal error', message: e.message });
+  }
 });
 
 // Food static map endpoint
