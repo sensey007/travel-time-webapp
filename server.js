@@ -88,7 +88,13 @@ app.use((req, res, next) => {
 const staticPath = process.env.NODE_ENV === 'production' && fs.existsSync(path.join(__dirname, 'dist')) 
   ? path.join(__dirname, 'dist') 
   : path.join(__dirname, 'src');
-app.use('/static', express.static(staticPath));
+app.use('/static', (req, res, next) => {
+  // Prevent caching of static files to ensure STB devices get latest versions
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+}, express.static(staticPath));
 
 // Health endpoint
 app.get('/healthz', (req, res) => {

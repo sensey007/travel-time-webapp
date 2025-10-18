@@ -46,7 +46,7 @@
     <div id="map"></div>
   </div>
   <script>window.__PUBLIC_BASE_URL__="__PUBLIC_BASE_URL__";(()=>{function send(p){try{if(navigator.sendBeacon){navigator.sendBeacon('/api/jslog',new Blob([JSON.stringify(p)],{type:'application/json'}))}else{fetch('/api/jslog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)})}}catch(e){}};window.addEventListener('error',e=>{send({message:e.message,source:e.filename,lineno:e.lineno,colno:e.colno,stack:e.error&&e.error.stack,ua:navigator.userAgent});});window.addEventListener('unhandledrejection',e=>{send({message:'unhandledrejection:'+ (e.reason&&e.reason.message||e.reason),stack:e.reason&&e.reason.stack,ua:navigator.userAgent});});})();</script>
-  <script type="module" src="/static/main.js?v=3"></script>
+  <script type="module" src="/static/main.js?v=4&t=20250118"></script>
   <!-- Google Maps API script inserted dynamically in main.js; placeholder key for server injection -->
   <script id="gmaps-script-template" type="application/json">{"key":"__GOOGLE_MAPS_API_KEY__"}</script>
 </body>
