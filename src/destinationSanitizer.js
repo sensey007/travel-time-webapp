@@ -3,15 +3,15 @@
 export function sanitizeDestinationForRouting (destination, apptTimeISO) {
   if (!destination) return destination;
   let src = String(destination);
-  // Pattern capturing leading appointment phrase with time followed by 'in' then address
-  const timePattern = /(doctor|dentist|appointment|meeting)[^\n]{0,80}?\b(at|@)\s*\d{1,2}[:\.][0-5]\d\s*(am|pm)?\s+in\s+(.+)/i;
+  // Updated pattern: allow compact times (\d{3,4}) with am/pm
+  const timePattern = /(doctor|dentist|appointment|meeting)[^\n]{0,80}?\b(at|@)\s*(?:\d{1,2}[:\.][0-5]\d|\d{3,4})\s*(am|pm)?\s+in\s+(.+)/i;
   const m = src.match(timePattern);
   if (m) {
     const addr = m[4].trim();
     if (addr.length >= 5) return addr; // basic sanity length
   }
-  // Alternate pattern: keywords + time without 'in' but address after a comma
-  const alt = /(doctor|dentist|appointment|meeting)[^\n]{0,80}?\b(at|@)\s*\d{1,2}[:\.][0-5]\d\s*(am|pm)?[,\-]\s*(.+)/i;
+  // Alternate pattern with comma/hyphen after time
+  const alt = /(doctor|dentist|appointment|meeting)[^\n]{0,80}?\b(at|@)\s*(?:\d{1,2}[:\.][0-5]\d|\d{3,4})\s*(am|pm)?[,\-]\s*(.+)/i;
   const m2 = src.match(alt);
   if (m2) {
     const addr = m2[4].trim();
@@ -27,4 +27,3 @@ export function sanitizeDestinationForRouting (destination, apptTimeISO) {
   }
   return src; // unchanged
 }
-

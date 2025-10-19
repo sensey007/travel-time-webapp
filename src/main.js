@@ -262,7 +262,15 @@ function shouldForceStatic () {
       if (extractedTime) {
         apptTime = extractedTime;
         console.log('DEBUG: Extracted appointment time from destination:', apptTime);
+      } else {
+        console.log('DEBUG: No appointment time extracted from destination');
       }
+    }
+
+    // Keep cfg.apptTime synchronized if newly found
+    if (apptTime && !cfg.apptTime) {
+      cfg.apptTime = apptTime;
+      console.log('DEBUG: Synchronized cfg.apptTime:', cfg.apptTime);
     }
 
     // Preserve original destination for intent detection (keywords) before sanitizing
@@ -279,6 +287,7 @@ function shouldForceStatic () {
 
     // Detect intent using original destination (before keyword removal) to retain Appointment intent
     const intentInfo = detectIntent({ origin: cfg.origin, destination: originalDestination, apptTime, cuisine: cfg.cuisine, intent: cfg.intent });
+    console.log('DEBUG: Detected intent object:', intentInfo);
     const externalMapsUrl = buildGoogleMapsExternalUrl(cfg, intentInfo);
     renderExternalMapsQR(externalMapsUrl, intentInfo); // QR always available
 
@@ -362,16 +371,41 @@ function shouldForceStatic () {
     } else {
       summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
     }
+    console.log('DEBUG: Summary initial (travel only):', summaryEl.innerHTML);
     // If appointment intent active, append depart/status info to summary
     if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
       const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
       const planTmp = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
+      console.log('DEBUG: Interim appointment plan for summary:', planTmp);
       if (planTmp.valid) {
         const departLocal = new Date(planTmp.departTimeISO).toLocaleTimeString();
         const apptLocal = new Date(planTmp.apptTimeISO).toLocaleTimeString();
         summaryEl.innerHTML += `<br/><strong>Appointment:</strong> ${apptLocal} (buffer ${planTmp.bufferMin}m)` +
           `<br/><strong>Depart by:</strong> ${departLocal}` +
           `<br/><strong>Status:</strong> ${planTmp.status}`;
+        console.log('DEBUG: Summary updated (appointment fields added):', summaryEl.innerHTML);
+      } else {
+        console.log('DEBUG: Appointment plan invalid, not updating summary');
+      }
+    } else if (intentInfo.intent === 'AppointmentLeaveTime' && !apptTime) {
+      console.log('DEBUG: Appointment intent detected but apptTime missing, summary not appended');
+    }
+
+    // Guard: ensure summary contains appointment fields if intent demands them
+    if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime && !/Appointment:\s/.test(summaryEl.innerHTML)) {
+      console.log('DEBUG: Appointment summary guard triggered (missing fields), re-appending');
+      const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
+      const planGuard = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
+      if (planGuard.valid) {
+        const departLocal = new Date(planGuard.departTimeISO).toLocaleTimeString();
+        const apptLocal = new Date(planGuard.apptTimeISO).toLocaleTimeString();
+        summaryEl.innerHTML += `<br/><strong>Appointment:</strong> ${apptLocal} (buffer ${planGuard.bufferMin}m)` +
+          `<br/><strong>Depart by:</strong> ${departLocal}` +
+          `<br/><strong>Status:</strong> ${planGuard.status}` +
+          `<br/><small style='opacity:.6'>(guard)</small>`;
+        console.log('DEBUG: Appointment summary guard appended fields');
+      } else {
+        console.log('DEBUG: Appointment summary guard found invalid plan');
       }
     }
 
@@ -392,9 +426,11 @@ function shouldForceStatic () {
     if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
       const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
       const plan = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
+      console.log('DEBUG: Final appointment plan for panel:', plan);
       apptEl.style.display = 'block';
       if (!plan.valid) {
         apptEl.innerHTML = `<div class='panel-title'>Appointment</div><div class='warn'>Invalid appointment time</div>`;
+        console.log('DEBUG: Appointment panel invalid time displayed');
       } else {
         const departLocal = new Date(plan.departTimeISO).toLocaleTimeString();
         const apptLocal = new Date(plan.apptTimeISO).toLocaleTimeString();
@@ -405,6 +441,7 @@ function shouldForceStatic () {
           `<div class='appt-field'><strong>Depart by:</strong> ${departLocal}</div>` +
           `<div class='appt-field' id='apptStatus'><strong>Status:</strong> ${plan.status}</div>` +
           `<div class='appt-field' id='apptCountdown'></div>`;
+        console.log('DEBUG: Appointment panel HTML populated:', apptEl.innerHTML);
         function fmt (s) { const m = Math.floor(s/60); const r = s%60; return `${m}m ${r}s`; }
         function updateCountdown () {
           const now = Date.now();
@@ -423,6 +460,8 @@ function shouldForceStatic () {
         updateCountdown();
         setInterval(updateCountdown, 30000); // update every 30s
       }
+    } else if (intentInfo.intent === 'AppointmentLeaveTime') {
+      console.log('DEBUG: Appointment intent but no apptTime; panel suppressed');
     }
 
     statusEl.textContent = 'Ready';

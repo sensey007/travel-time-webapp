@@ -66,4 +66,10 @@ describe('appointmentTimeParser', () => {
     expect(d.getHours() === 11 || d.getHours() === 23).toBe(true); // allow rollover heuristic
     expect(d.getMinutes()).toBe(30);
   });
+  test('parses compact time without colon', () => {
+    const iso = parseAppointmentTimeFromText('Doctor Appointment at 1130 AM in 1805 Deer Drive PA');
+    expect(iso).toBeTruthy();
+    const d = new Date(iso);
+    expect(d.getMinutes()).toBe(30);
+  });
 });

@@ -5,6 +5,28 @@ export function parseAppointmentTimeFromText (text) {
   if (!text) return null;
   const now = new Date();
   const lower = String(text).toLowerCase();
+
+  // NEW: compact time pattern e.g. 1130am, 1130 am, 930pm (no colon)
+  // Must ensure we do not match longer street numbers: require am/pm suffix.
+  let compactMatch = lower.match(/\b(\d{3,4})\s*(am|pm)\b/);
+  let compactHour = null; let compactMin = null; let compactSuffix = null;
+  if (compactMatch) {
+    const raw = compactMatch[1];
+    compactSuffix = compactMatch[2];
+    if (raw.length === 3) { compactHour = parseInt(raw.substring(0, 1), 10); compactMin = parseInt(raw.substring(1), 10); }
+    else { compactHour = parseInt(raw.substring(0, 2), 10); compactMin = parseInt(raw.substring(2), 10); }
+    if (compactHour > 0 && compactHour <= 12 && compactMin >= 0 && compactMin <= 59) {
+      let h24 = compactHour;
+      if (compactSuffix === 'am' && h24 === 12) h24 = 0;
+      if (compactSuffix === 'pm' && h24 < 12) h24 += 12;
+      const now = new Date();
+      let candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h24, compactMin, 0, 0);
+      if (/\btomorrow\b/.test(lower)) candidate.setDate(candidate.getDate() + 1);
+      if (candidate.getTime() < now.getTime() - 5 * 60 * 1000) candidate.setDate(candidate.getDate() + 1);
+      return candidate.toISOString();
+    }
+  }
+
   const isTomorrow = /\btomorrow\b/.test(lower);
 
   // --- Keyword handling ---
