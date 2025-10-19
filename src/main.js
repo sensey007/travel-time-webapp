@@ -12,6 +12,8 @@ import { computeAppointmentPlan } from './appointment.js';
 console.log('DEBUG: computeAppointmentPlan imported');
 import { parseAppointmentTimeFromText } from './appointmentTimeParser.js';
 console.log('DEBUG: parseAppointmentTimeFromText imported');
+import { sanitizeDestinationForRouting } from './destinationSanitizer.js';
+console.log('DEBUG: sanitizeDestinationForRouting imported');
 console.log('DEBUG: All imports completed');
 
 const statusEl = document.getElementById('status');
@@ -149,6 +151,21 @@ function shouldForceStatic () {
 (async function bootstrap () {
   console.log('DEBUG: bootstrap function starting');
   const cfg = parseDeepLink(window.location.search);
+  // Attempt early time extraction (for appointment-only mode if origin missing)
+  let extractedApptTime = cfg.apptTime;
+  if (!extractedApptTime && cfg.destination) {
+    try { extractedApptTime = parseAppointmentTimeFromText(cfg.destination) || null; } catch { extractedApptTime = null; }
+  }
+  // NEW: fallback parse from origin text if still not found
+  if (!extractedApptTime && cfg.origin) {
+    try {
+      const parsedFromOrigin = parseAppointmentTimeFromText(cfg.origin);
+      if (parsedFromOrigin) {
+        extractedApptTime = parsedFromOrigin;
+        console.log('DEBUG: Extracted appointment time from origin string:', extractedApptTime);
+      }
+    } catch { /* ignore */ }
+  }
   console.log('DEBUG: parseDeepLink completed, config:', cfg);
   if (cfg.warnings.length) {
     statusEl.innerHTML = cfg.warnings.map(w => `<div class='warn'>${w}</div>`).join('');
@@ -156,11 +173,57 @@ function shouldForceStatic () {
     statusEl.textContent = 'Loading map\u2026';
   }
   if (!cfg.origin || !cfg.destination) {
+    // New: Allow appointment-only mode if we have an extracted appointment time in destination OR origin
+    if (extractedApptTime) {
+      statusEl.classList.remove('loading');
+      statusEl.innerHTML = '<div class="warn">Origin or destination missing. Showing appointment plan only.</div>';
+      const intentInfo = { intent: 'AppointmentLeaveTime' };
+      const durationSec = 0; // unknown travel time without origin/destination
+      const plan = computeAppointmentPlan(extractedApptTime, durationSec, cfg.bufferMin);
+      apptEl.style.display = 'block';
+      if (!plan.valid) {
+        apptEl.innerHTML = '<div class="panel-title">Appointment</div><div class="warn">Invalid appointment time</div>';
+      } else {
+        const departLocal = new Date(plan.departTimeISO).toLocaleTimeString();
+        const apptLocal = new Date(plan.apptTimeISO).toLocaleTimeString();
+        apptEl.innerHTML = `<div class='panel-title'>Appointment Plan</div>` +
+          `<div class='appt-field'><strong>Appointment:</strong> ${apptLocal}</div>` +
+          `<div class='appt-field'><strong>Buffer:</strong> ${plan.bufferMin} min</div>` +
+          `<div class='appt-field'><strong>Depart by:</strong> ${departLocal}</div>` +
+          `<div class='appt-field' id='apptStatus'><strong>Status:</strong> ${plan.status}</div>` +
+          `<div class='appt-field' id='apptCountdown'></div>` +
+          `<div class='appt-field' style='opacity:.6'><em>Add origin & destination parameters to compute travel time.</em></div>`;
+        function fmt (s) { const m = Math.floor(s/60); const r = s%60; return `${m}m ${r}s`; }
+        function updateCountdown () {
+          const now = Date.now();
+          const leaveIn = Math.floor((new Date(plan.departTimeISO).getTime() - now)/1000);
+          const apptIn = Math.floor((new Date(plan.apptTimeISO).getTime() - now)/1000);
+          const statusEl2 = document.getElementById('apptStatus');
+          if (leaveIn <= 0 && apptIn > 0) { statusEl2.innerHTML = '<strong>Status:</strong> LeaveNow'; }
+          if (apptIn <= 0) { statusEl2.innerHTML = '<strong>Status:</strong> Late'; }
+          const cdEl = document.getElementById('apptCountdown');
+          if (cdEl) {
+            if (apptIn <= 0) cdEl.textContent = 'Appointment time reached';
+            else if (leaveIn > 0) cdEl.textContent = 'Time until depart: ' + fmt(leaveIn);
+            else cdEl.textContent = 'Time until appointment: ' + fmt(apptIn);
+          }
+        }
+        updateCountdown();
+        setInterval(updateCountdown, 30000);
+        // ENHANCED SUMMARY: include depart time & status
+        summaryEl.innerHTML = `<strong>Appointment:</strong> ${apptLocal}<br/><strong>Depart by:</strong> ${departLocal}<br/><strong>Buffer:</strong> ${plan.bufferMin}m<br/><strong>Status:</strong> ${plan.status}`;
+      }
+      // Map panel: show placeholder static message
+      mapEl.innerHTML = '<div style="padding:16px;color:#888;font-size:14px">No map (origin/destination missing). Provide ?origin=...&destination=... for route.</div>';
+      return; // stop further processing
+    }
     statusEl.classList.remove('loading');
     statusEl.classList.add('error');
     statusEl.innerHTML += '<div>Usage: ?origin=ADDRESS&destination=ADDRESS&mode=driving</div>';
     return;
   }
+  // Overwrite cfg.apptTime if we extracted one
+  if (extractedApptTime && !cfg.apptTime) cfg.apptTime = extractedApptTime;
   try {
     const forceStatic = shouldForceStatic();
     console.log('DEBUG: forceStatic result:', forceStatic);
@@ -202,7 +265,20 @@ function shouldForceStatic () {
       }
     }
 
-    const intentInfo = detectIntent({ ...cfg, apptTime });
+    // Preserve original destination for intent detection (keywords) before sanitizing
+    const originalDestination = cfg.destination;
+
+    // Sanitize destination for routing if appointment time present and keywords embedded
+    if (apptTime) {
+      const cleanedDest = sanitizeDestinationForRouting(cfg.destination, apptTime);
+      if (cleanedDest !== cfg.destination) {
+        console.log('DEBUG: Sanitized destination for routing:', cleanedDest);
+        cfg.destination = cleanedDest; // mutate cfg for downstream API calls / summaries
+      }
+    }
+
+    // Detect intent using original destination (before keyword removal) to retain Appointment intent
+    const intentInfo = detectIntent({ origin: cfg.origin, destination: originalDestination, apptTime, cuisine: cfg.cuisine, intent: cfg.intent });
     const externalMapsUrl = buildGoogleMapsExternalUrl(cfg, intentInfo);
     renderExternalMapsQR(externalMapsUrl, intentInfo); // QR always available
 
@@ -285,6 +361,18 @@ function shouldForceStatic () {
       summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Base: ${leg.duration.text} | Traffic: ${trafficTxt}`;
     } else {
       summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
+    }
+    // If appointment intent active, append depart/status info to summary
+    if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
+      const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
+      const planTmp = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
+      if (planTmp.valid) {
+        const departLocal = new Date(planTmp.departTimeISO).toLocaleTimeString();
+        const apptLocal = new Date(planTmp.apptTimeISO).toLocaleTimeString();
+        summaryEl.innerHTML += `<br/><strong>Appointment:</strong> ${apptLocal} (buffer ${planTmp.bufferMin}m)` +
+          `<br/><strong>Depart by:</strong> ${departLocal}` +
+          `<br/><strong>Status:</strong> ${planTmp.status}`;
+      }
     }
 
     // Static map selection

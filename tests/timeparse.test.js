@@ -59,5 +59,11 @@ describe('appointmentTimeParser', () => {
     const iso = parseAppointmentTimeFromText('no time mentioned');
     expect(iso).toBeNull();
   });
+  test('parses full phrase with address after time', () => {
+    const iso = parseAppointmentTimeFromText('Doctor appointment at 11:30am in 1805 Deer Drive PA');
+    expect(iso).toBeTruthy();
+    const d = new Date(iso);
+    expect(d.getHours() === 11 || d.getHours() === 23).toBe(true); // allow rollover heuristic
+    expect(d.getMinutes()).toBe(30);
+  });
 });
-
