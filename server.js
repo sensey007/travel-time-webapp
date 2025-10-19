@@ -389,54 +389,153 @@ app.get('/api/staticmap/travel/image', async (req, res) => {
   } catch (e) { log('error','staticmap_travel_image_exception',{ message: e.message }); return res.status(500).json({ error: 'Internal error', message: e.message }); }
 });
 
-// Appointment static map endpoint
+// Appointment static map endpoint (FIXED: supports ISO apptTime, status & countdown)
 app.get('/api/staticmap/appointment', async (req, res) => {
   try {
-    const { origin, destination, apptTime, bufferMin } = req.query; let { mode = 'driving', size = '1024x768', scale = '1' } = req.query;
-    if (!origin || !destination) return res.status(400).json({ error: 'origin and destination are required' });
-    if (!apptTime) return res.status(400).json({ error: 'apptTime is required' });
-    const parsedTime = parseAppointmentTimeFromText(apptTime);
-    if (!parsedTime) return res.status(400).json({ error: 'Invalid apptTime format' });
+    const { origin, destination, apptTime, bufferMin } = req.query;
+    let { mode = 'driving', size = '1024x768', scale = '1' } = req.query;
 
-    // parsedTime is an ISO string, convert to Date
-    const appointmentDate = new Date(parsedTime);
-    if (isNaN(appointmentDate.getTime())) return res.status(400).json({ error: 'Invalid appointment date' });
+    if (!origin || !destination)
+      return res.status(400).json({ error: 'origin and destination are required' });
+    if (!apptTime)
+      return res.status(400).json({ error: 'apptTime is required' });
 
-    const apiKey = getApiKey(); const noKey = !apiKey; const mock = noKey || (req.query.mock === 'true');
+    // Accept ISO timestamp or natural language
+    const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+    let appointmentDate = null;
+    if (isoPattern.test(apptTime)) {
+      appointmentDate = new Date(apptTime);
+    } else {
+      const parsedIso = parseAppointmentTimeFromText(apptTime); // returns ISO or null
+      if (!parsedIso)
+        return res.status(400).json({ error: 'Invalid apptTime format' });
+      appointmentDate = new Date(parsedIso);
+    }
+    if (!appointmentDate || isNaN(appointmentDate.getTime()))
+      return res.status(400).json({ error: 'Invalid appointment date' });
+
+    const apiKey = getApiKey();
+    const noKey = !apiKey;
+    const mock = noKey || (req.query.mock === 'true');
+
     const { params, sizeUsed, scaleUsed } = buildBaseStaticMapParams(size, scale);
-    let meta = { origin, destination, mode: String(mode).toLowerCase(), sizeRequested: size, sizeUsed, scaleRequested: scale, scaleUsed, providerStatus: mock ? (noKey ? 'NO_KEY_MOCK' : 'MOCK') : null };
+    const bufferMinutes = Math.max(0, Math.min(120, parseInt(bufferMin, 10) || 10));
+
+    let meta = {
+      origin,
+      destination,
+      mode: String(mode).toLowerCase(),
+      sizeRequested: size,
+      sizeUsed,
+      scaleRequested: scale,
+      scaleUsed,
+      bufferMin: bufferMinutes,
+      providerStatus: mock ? (noKey ? 'NO_KEY_MOCK' : 'MOCK') : null
+    };
+
+    // MOCK path: approximate travel time 30m
     if (mock) {
       params.set('center', origin);
       params.append('markers', 'color:gray|label:A|' + origin);
       params.append('markers', 'color:red|label:B|' + destination);
       const urlStatic = finalizeStaticUrl(params, apiKey, true);
+
+      const travelApproxMs = 30 * 60000;
+      const departureTime = new Date(appointmentDate.getTime() - travelApproxMs - bufferMinutes * 60000);
+      const now = new Date();
+      let status = 'Future';
+      if (now >= appointmentDate) status = 'Late';
+      else if (now >= departureTime) status = 'LeaveNow';
+      const countdownSec = Math.max(0, Math.round((appointmentDate.getTime() - now.getTime()) / 1000));
+
+      meta = {
+        ...meta,
+        appointmentTime: appointmentDate.toISOString(),
+        departureTime: departureTime.toISOString(),
+        status,
+        countdownSec
+      };
       return res.json({ status: 'OK', mock: true, staticMapUrl: urlStatic, meta });
     }
 
-    // First get route to calculate travel time
-    const paramsDirections = new URLSearchParams({ origin, destination, mode, key: apiKey });
-    const urlDirections = 'https://maps.googleapis.com/maps/api/directions/json?' + paramsDirections.toString();
-    const started = Date.now(); const fetchRes = await fetch(urlDirections); const raw = await fetchRes.json(); const elapsedMs = Date.now() - started;
-    if (raw.status !== 'OK' || !raw.routes?.length) return res.status(502).json({ error: 'Directions API error', providerStatus: raw.status, elapsedMs, raw: raw.status });
-    const route = raw.routes[0]; const leg = route.legs[0]; metrics.directionsCalls++;
+    // Directions API
+    const dirParams = new URLSearchParams({
+      origin,
+      destination,
+      mode: meta.mode,
+      language: 'en',
+      key: apiKey
+    });
+    const dirUrl = 'https://maps.googleapis.com/maps/api/directions/json?' + dirParams.toString();
+    const started = Date.now();
+    let route = null, leg = null, providerStatus = null, directionsJson = null;
+    try {
+      const dirResp = await fetch(dirUrl);
+      directionsJson = await dirResp.json();
+      providerStatus = directionsJson.status;
+      if (directionsJson.status === 'OK' && directionsJson.routes?.length) {
+        route = directionsJson.routes[0];
+        leg = route.legs[0];
+        metrics.directionsCalls++;
+      }
+    } catch (e) {
+      providerStatus = 'FETCH_ERROR';
+    }
+    const elapsedMs = Date.now() - started;
 
-    // Calculate departure time: appointment - travel - buffer
-    const travelTimeMs = (leg.duration?.value || 0) * 1000;
-    const bufferMs = Math.max(0, Math.min(120, parseInt(bufferMin, 10) || 10)) * 60 * 1000;
-    const departureTime = new Date(appointmentDate.getTime() - travelTimeMs - bufferMs);
+    const travelTimeMs = leg?.duration?.value ? leg.duration.value * 1000 : 30 * 60000;
+    const departureTime = new Date(appointmentDate.getTime() - travelTimeMs - bufferMinutes * 60000);
+    const now = new Date();
+    let status = 'Future';
+    if (now >= appointmentDate) status = 'Late';
+    else if (now >= departureTime) status = 'LeaveNow';
+    const countdownSec = Math.max(0, Math.round((appointmentDate.getTime() - now.getTime()) / 1000));
 
-    meta = { ...meta, distance: leg.distance, duration: leg.duration, start_address: leg.start_address, end_address: leg.end_address, appointmentTime: appointmentDate.toISOString(), departureTime: departureTime.toISOString(), bufferMin: Math.round(bufferMs/60000) };
+    meta = {
+      ...meta,
+      providerStatus,
+      directionsElapsedMs: elapsedMs,
+      distance: leg?.distance || null,
+      duration: leg?.duration || null,
+      start_address: leg?.start_address || null,
+      end_address: leg?.end_address || null,
+      appointmentTime: appointmentDate.toISOString(),
+      departureTime: departureTime.toISOString(),
+      status,
+      countdownSec
+    };
+
+    // Build static map
     const { params: mapParams } = buildBaseStaticMapParams(size, scale);
-    mapParams.append('markers', 'color:green|label:A|' + leg.start_location.lat + ',' + leg.start_location.lng);
-    mapParams.append('markers', 'color:red|label:B|' + leg.end_location.lat + ',' + leg.end_location.lng);
-    if (route.overview_polyline?.points) mapParams.append('path', 'enc:' + route.overview_polyline.points); else mapParams.set('center', origin);
+    if (leg?.start_location && leg?.end_location) {
+      mapParams.append(
+        'markers',
+        'color:green|label:A|' + leg.start_location.lat + ',' + leg.start_location.lng
+      );
+      mapParams.append(
+        'markers',
+        'color:red|label:B|' + leg.end_location.lat + ',' + leg.end_location.lng
+      );
+      if (route?.overview_polyline?.points) {
+        mapParams.append('path', 'enc:' + route.overview_polyline.points);
+      } else {
+        mapParams.set('center', origin);
+      }
+    } else {
+      mapParams.set('center', origin);
+      mapParams.append('markers', 'color:gray|label:A|' + origin);
+      mapParams.append('markers', 'color:red|label:B|' + destination);
+    }
+
     const urlStatic = finalizeStaticUrl(mapParams, apiKey, false);
-    return res.json({ status: 'OK', staticMapUrl: urlStatic, meta });
+    const statusOut = providerStatus === 'OK' ? 'OK' : 'FALLBACK';
+    return res.json({ status: statusOut, staticMapUrl: urlStatic, meta });
   } catch (err) {
     log('error', 'staticmap_appointment_exception', { message: err.message, stack: err.stack });
-    res.status(400).json({ error: 'Internal server error', message: err.message });
+    return res.status(500).json({ error: 'Internal server error', message: err.message });
   }
 });
+
 
 
 // Direct image endpoint for Appointment static map
