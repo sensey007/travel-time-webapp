@@ -337,40 +337,58 @@ function shouldForceStatic () {
     let leg;
     let trafficData = null;
 
-    if (cfg.useProxy) {
-      statusEl.textContent = 'Fetching route (server proxy)\u2026';
-      const proxyUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
-      const resp = await fetch(proxyUrl);
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        const providerStatus = data.providerStatus || 'UNKNOWN';
-        throw new Error(`Directions API error (providerStatus=${providerStatus})`);
+    // New: cleanup destination prefixes like "Drive to" for routing
+    const cleanedTravelDest = cfg.destination ? cfg.destination.replace(/^\s*(drive|go|travel)\s+to\s+/i, '').trim() : cfg.destination;
+
+    // Always attempt proxy first when interactive is not enabled (static mode), even if useProxy flag not provided.
+    let routeFetched = false; let providerStatus = null; let routeError = null;
+    if (cfg.useProxy || !interactiveEnabled) {
+      try {
+        statusEl.textContent = 'Fetching route (server proxy)…';
+        const proxyUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cleanedTravelDest)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
+        const resp = await fetch(proxyUrl);
+        const data = await resp.json().catch(() => ({}));
+        providerStatus = data.providerStatus || null;
+        if (!resp.ok) throw new Error(`Directions API error (providerStatus=${providerStatus || 'UNKNOWN'})`);
+        leg = { start_address: data.origin, end_address: data.destination, distance: data.distance, duration: data.duration };
+        routeFetched = true;
+        // Optional traffic matrix
+        if (cfg.traffic) {
+          try {
+            const mUrl = `/api/matrix?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cleanedTravelDest)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
+            const mResp = await fetch(mUrl);
+            const mData = await mResp.json().catch(() => ({}));
+            if (mResp.ok) trafficData = mData; else console.warn('Matrix error', mData);
+          } catch (e) { console.warn('Traffic matrix exception', e.message); }
+        }
+      } catch (e) {
+        routeError = e; console.warn('Proxy route failed:', e.message);
       }
-      leg = { start_address: data.origin, end_address: data.destination, distance: data.distance, duration: data.duration };
-      if (cfg.traffic) {
-        try {
-          const mUrl = `/api/matrix?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(cfg.destination)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}${mockMode ? '&mock=true' : ''}`;
-          const mResp = await fetch(mUrl);
-          const mData = await mResp.json().catch(() => ({}));
-          if (mResp.ok) trafficData = mData; else console.warn('Matrix error', mData);
-        } catch (e) { /* ignore traffic error */ }
-      }
-    } else if (interactiveEnabled && mapCtl) {
-      // interactive route (will still display static afterwards for STB consistency if forceStatic)
-      const result = await mapCtl.route(cfg.mode);
-      leg = result.routes[0].legs[0];
-    } else {
-      // fallback mock leg
+    }
+
+    // If proxy not fetched and interactive available, try interactive route
+    if (!routeFetched && interactiveEnabled && mapCtl) {
+      try {
+        const result = await mapCtl.route(cfg.mode);
+        if (result?.routes?.length) {
+          leg = result.routes[0].legs[0];
+          providerStatus = 'OK';
+          routeFetched = true;
+        }
+      } catch (e) { console.warn('Interactive route failed:', e.message); }
+    }
+
+    // Final fallback mock leg if nothing succeeded
+    if (!routeFetched) {
       leg = { start_address: cfg.origin, end_address: cfg.destination, distance: { text: '120 km', value: 120000 }, duration: { text: '1 hour 25 mins', value: 5100 } };
+      if (!providerStatus) providerStatus = 'MOCK_FALLBACK';
     }
 
     // Summary
-    if (trafficData && trafficData.durationInTraffic) {
-      const trafficTxt = trafficData.durationInTraffic.text;
-      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Base: ${leg.duration.text} | Traffic: ${trafficTxt}`;
-    } else {
-      summaryEl.innerHTML = `<strong>${leg.start_address}</strong> \u2192 <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
-    }
+    const baseSummary = trafficData && trafficData.durationInTraffic
+      ? `<strong>${leg.start_address}</strong> → <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Base: ${leg.duration.text} | Traffic: ${trafficData.durationInTraffic.text}`
+      : `<strong>${leg.start_address}</strong> → <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
+    summaryEl.innerHTML = baseSummary + (providerStatus ? `<br/><span style='font-size:11px;opacity:.6'>providerStatus: ${providerStatus}</span>` : '');
     console.log('DEBUG: Summary initial (travel only):', summaryEl.innerHTML);
     // If appointment intent active, append depart/status info to summary
     if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
