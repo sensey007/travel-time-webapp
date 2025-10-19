@@ -10,6 +10,8 @@ import { getMockRestaurants } from './restaurants.js';
 console.log('DEBUG: getMockRestaurants imported');
 import { computeAppointmentPlan } from './appointment.js';
 console.log('DEBUG: computeAppointmentPlan imported');
+import { parseAppointmentTimeFromText } from './appointmentTimeParser.js';
+console.log('DEBUG: parseAppointmentTimeFromText imported');
 console.log('DEBUG: All imports completed');
 
 const statusEl = document.getElementById('status');
@@ -190,7 +192,17 @@ function shouldForceStatic () {
       interactiveEnabled = false;
     }
 
-    const intentInfo = detectIntent(cfg);
+    // Auto-extract appointment time from destination if not provided
+    let apptTime = cfg.apptTime;
+    if (!apptTime && cfg.destination) {
+      const extractedTime = parseAppointmentTimeFromText(cfg.destination);
+      if (extractedTime) {
+        apptTime = extractedTime;
+        console.log('DEBUG: Extracted appointment time from destination:', apptTime);
+      }
+    }
+
+    const intentInfo = detectIntent({ ...cfg, apptTime });
     const externalMapsUrl = buildGoogleMapsExternalUrl(cfg, intentInfo);
     renderExternalMapsQR(externalMapsUrl, intentInfo); // QR always available
 
@@ -280,18 +292,18 @@ function shouldForceStatic () {
     console.log('DEBUG: Intent:', intentInfo.intent);
     console.log('DEBUG: Has apptTime:', !!cfg.apptTime);
     
-    if (intentInfo.intent === 'AppointmentLeaveTime' && cfg.apptTime) {
+    if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
       console.log('DEBUG: Loading appointment static map');
-      await loadStaticAppointmentMap(cfg);
+      await loadStaticAppointmentMap({ ...cfg, apptTime });
     } else {
       console.log('DEBUG: Loading travel static map');
       await loadStaticTravelMap(cfg);
     }
 
     // Appointment panel (unchanged logic) - still useful even with static map
-    if (intentInfo.intent === 'AppointmentLeaveTime' && cfg.apptTime) {
+    if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
       const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
-      const plan = computeAppointmentPlan(cfg.apptTime, durationSec, cfg.bufferMin);
+      const plan = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
       apptEl.style.display = 'block';
       if (!plan.valid) {
         apptEl.innerHTML = `<div class='panel-title'>Appointment</div><div class='warn'>Invalid appointment time</div>`;
