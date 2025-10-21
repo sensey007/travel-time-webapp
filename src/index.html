@@ -7,10 +7,12 @@
   <style>
     body { margin:0; font-family: system-ui, Arial, sans-serif; background:#111; color:#eee; }
     #appShell { display:flex; flex-direction:row; height:100vh; width:100vw; overflow:hidden; }
-    #leftColumn { width:360px; max-width:40%; min-width:280px; background:#1c1c1c; display:flex; flex-direction:column; border-right:1px solid #2d2d2d; }
+    #leftColumn { width:360px; max-width:40%; min-width:280px; background:#1c1c1c; display:flex; flex-direction:column; border-right:1px solid #2d2d2d; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    #leftColumn:focus { outline:none; box-shadow:0 0 0 2px #333 inset; } /* фокус для пульта/клавиатуры */
     header { padding: 10px 14px; background:#222; font-size: 18px; flex:0 0 auto; }
     #panel { padding: 8px 12px; flex:0 0 auto; }
-    #foodPanel { padding:8px 12px; background:#242424; flex:1 1 auto; overflow-y:auto; }
+    /* убран внутренний скролл, пусть прокручивается родитель */
+    #foodPanel { padding:8px 12px; background:#242424; flex:0 0 auto; }
     #map { flex:1 1 auto; height:100%; background:#000; position:relative; }
     .error { color: #ff6b6b; }
     .warn { color: #ffa94d; }
@@ -29,11 +31,16 @@
     .qr-box small { display:block; font-size:10px; opacity:.6; word-break:break-word; }
     #apptPanel { padding:8px 12px; background:#262626; display:none; }
     .appt-field { font-size:14px; margin:4px 0; }
+    /* Optional тонкие скроллбары для WebKit */
+    #leftColumn::-webkit-scrollbar { width:8px; }
+    #leftColumn::-webkit-scrollbar-track { background:#1c1c1c; }
+    #leftColumn::-webkit-scrollbar-thumb { background:#333; border-radius:4px; }
+    #leftColumn::-webkit-scrollbar-thumb:hover { background:#444; }
   </style>
 </head>
 <body>
   <div id="appShell">
-    <div id="leftColumn">
+    <div id="leftColumn" tabindex="0" aria-label="Side information panel">
       <header>Travel Time</header>
       <div id="panel">
         <div id="status" class="row loading">Initializing…</div>
@@ -47,52 +54,26 @@
   </div>
   <script>
     window.__PUBLIC_BASE_URL__="__PUBLIC_BASE_URL__";
-    console.log('DEBUG: Inline script starting, line 48');
     (function(){
-      console.log('DEBUG: Inside IIFE, checking navigator.sendBeacon support');
       function send(p){
-        try{
-          console.log('DEBUG: sendBeacon check:', typeof navigator.sendBeacon);
-          if(navigator.sendBeacon){
-            console.log('DEBUG: Using sendBeacon');
-            navigator.sendBeacon('/api/jslog',new Blob([JSON.stringify(p)],{type:'application/json'}));
-          }else{
-            console.log('DEBUG: Using fetch fallback');
-            fetch('/api/jslog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-          }
-        }catch(e){
-          console.log('DEBUG: Error in send function:', e.message);
-        }
+        try{ if(navigator.sendBeacon){ navigator.sendBeacon('/api/jslog',new Blob([JSON.stringify(p)],{type:'application/json'})); } else { fetch('/api/jslog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); } }catch(e){}
       }
-      console.log('DEBUG: Setting up error listeners');
       window.addEventListener('error',function(e){
-        console.log('DEBUG: Error event caught:', e.message, 'at line', e.lineno, 'column', e.colno);
-        console.log('DEBUG: Error source:', e.filename || 'unknown');
-        console.log('DEBUG: Error stack:', e.error && e.error.stack);
-        send({
-          message:e.message,
-          source:e.filename,
-          lineno:e.lineno,
-          colno:e.colno,
-          stack:e.error&&e.error.stack,
-          ua:navigator.userAgent,
-          timestamp: new Date().toISOString()
-        });
+        send({ message:e.message, source:e.filename, lineno:e.lineno, colno:e.colno, stack:e.error&&e.error.stack, ua:navigator.userAgent, timestamp:new Date().toISOString() });
       });
       window.addEventListener('unhandledrejection',function(e){
-        console.log('DEBUG: Unhandled rejection:', e.reason);
-        send({
-          message:'unhandledrejection:'+ (e.reason&&e.reason.message||e.reason),
-          stack:e.reason&&e.reason.stack,
-          ua:navigator.userAgent,
-          timestamp: new Date().toISOString()
-        });
+        send({ message:'unhandledrejection:'+(e.reason&&e.reason.message||e.reason), stack:e.reason&&e.reason.stack, ua:navigator.userAgent, timestamp:new Date().toISOString() });
       });
-      console.log('DEBUG: Inline script setup complete');
     })();
+    // Автофокус на левую панель при загрузке (для навигации стрелками на приставке)
+    window.addEventListener('DOMContentLoaded', () => {
+      const lc = document.getElementById('leftColumn');
+      if (lc) {
+        try { lc.focus(); } catch(_) {}
+      }
+    });
   </script>
   <script type="module" src="/static/main.js?v=5&debug=true"></script>
-  <!-- Google Maps API script inserted dynamically in main.js; placeholder key for server injection -->
   <script id="gmaps-script-template" type="application/json">{"key":"__GOOGLE_MAPS_API_KEY__"}</script>
 </body>
 </html>
