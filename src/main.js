@@ -174,6 +174,16 @@ function setupRestoreHandler(cfg) {
           } else if (window.__baseScreen.intent === 'AppointmentLeaveTime') {
             loadStaticAppointmentMap(cfg);
           }
+          // Focus previously selected restaurant index (if still present)
+          setTimeout(() => {
+            if (window.__lastRestaurantIndex != null) {
+              const items = foodEl.querySelectorAll('.restaurant-item');
+              const idx = Math.min(items.length - 1, Math.max(0, window.__lastRestaurantIndex));
+              if (items[idx]) { try { items[idx].focus(); } catch(_) {} }
+            } else {
+              try { foodEl.querySelector('.restaurant-item')?.focus(); } catch(_) {}
+            }
+          }, 50);
           e.preventDefault();
         } catch (err) { console.warn('Restore failed', err); }
       }
@@ -284,10 +294,12 @@ function setupRestoreHandler(cfg) {
         const foodResp = await fetch(foodUrl); const foodData = await foodResp.json().catch(()=>({}));
         if (foodResp.ok && foodData.results?.length) {
           const list = foodData.results; foodEl.style.display='block';
-          const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
+          // const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
           const sourceBadge = foodData.source==='cache'?"<span style='font-size:11px;opacity:.6'>(cache)</span>":'';
-          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
-            list.map(r=>`<div class='restaurant-item' tabindex='0' data-name='${r.name.replace(/'/g,'')}' data-lat='${r.location?.lat??''}' data-lng='${r.location?.lng??''}'>• <strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
+          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` +
+            list.map((r,i)=>`<div class='restaurant-item' tabindex='0' data-idx='${i}' data-name='${r.name.replace(/'/g,'')}' data-lat='${r.location?.lat??''}' data-lng='${r.location?.lng??''}'>• <span class='num'>${i+1}.</span><strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
+          // clusterInfo +
+          // list.map(r=>`<div class='restaurant-item' tabindex='0' data-name='${r.name.replace(/'/g,'')}' data-lat='${r.location?.lat??''}' data-lng='${r.location?.lng??''}'>• <strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Nearby ${intentInfo.cuisine || 'restaurants'}`;
           (function enableRestaurantSelection(){
             const items = foodEl.querySelectorAll('.restaurant-item');
@@ -295,6 +307,9 @@ function setupRestoreHandler(cfg) {
               items.forEach(i=>i.classList.remove('selected'));
               el.classList.add('selected');
               document.body.classList.add('detail-mode');
+              // record last index
+              const idxAttr = el.getAttribute('data-idx');
+              if (idxAttr) window.__lastRestaurantIndex = parseInt(idxAttr,10);
               const lat = el.getAttribute('data-lat');
               const lng = el.getAttribute('data-lng');
               const dest = lat && lng ? `${lat},${lng}` : el.getAttribute('data-name');
@@ -322,7 +337,7 @@ function setupRestoreHandler(cfg) {
         } else {
           const ps = foodData?.providerStatus || foodData?.error || 'UNKNOWN';
           const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
-          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item' tabindex='0' data-name='${r.replace(/'/g,'')}'>• <strong>${r}</strong><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
+          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map((r,i)=>`<div class='restaurant-item' tabindex='0' data-idx='${i}' data-name='${r.replace(/'/g,'')}'>• <span class='num'>${i+1}.</span><strong>${r}</strong><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Mock ${intentInfo.cuisine || 'restaurants'} (API ${ps})`;
           statusEl.innerHTML = `<div class='warn'>Places API fallback (${ps})</div>`;
           (function enableRestaurantSelection(){
@@ -331,6 +346,8 @@ function setupRestoreHandler(cfg) {
               items.forEach(i=>i.classList.remove('selected'));
               el.classList.add('selected');
               document.body.classList.add('detail-mode');
+              const idxAttr = el.getAttribute('data-idx');
+              if (idxAttr) window.__lastRestaurantIndex = parseInt(idxAttr,10);
               const dest = el.getAttribute('data-name');
               statusEl.textContent = 'Routing to ' + dest + '…';
               const dirUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(dest)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}`;
@@ -355,7 +372,7 @@ function setupRestoreHandler(cfg) {
         }
       } catch (e) {
         const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
-        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• <strong>${r}</strong></div>`).join('');
+        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map((r,i)=>`<div class='restaurant-item' tabindex='0' data-idx='${i}' data-name='${r.replace(/'/g,'')}'>• <span class='num'>${i+1}.</span><strong>${r}</strong></div>`).join('');
         summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Mock ${intentInfo.cuisine || 'restaurants'} (exception)`;
         statusEl.innerHTML = `<div class='warn'>Exception loading Places: ${e.message}</div>`;
         await loadStaticFoodMap(cfg, intentInfo, list.length);
