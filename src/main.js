@@ -150,6 +150,37 @@ function setupDepartOverlay (plan) {
   } catch (e) { console.warn('Depart overlay setup failed:', e.message); }
 }
 
+// Quick restore helper (Back/Escape) – set after initial render
+function setupRestoreHandler(cfg) {
+  if (window.__restoreHandlerAttached) return; // avoid duplicate
+  window.__restoreHandlerAttached = true;
+  window.addEventListener('keydown', (e) => {
+    const k = (e.key || '').toLowerCase();
+    if (['escape','backspace','browserback','back'].includes(k)) {
+      if (document.body.classList.contains('detail-mode') && window.__baseScreen) {
+        try {
+          // Restore summary
+            if (window.__baseScreen.summaryHTML) summaryEl.innerHTML = window.__baseScreen.summaryHTML;
+          // Clear selection
+          foodEl.querySelectorAll('.restaurant-item.selected').forEach(el=>el.classList.remove('selected'));
+          document.body.classList.remove('detail-mode');
+          statusEl.textContent = 'Ready';
+          // Reload original map depending on intent
+          if (window.__baseScreen.intent === 'NearbyFood') {
+            const resultsCount = foodEl.querySelectorAll('.restaurant-item').length || window.__baseScreen.resultsCount || 0;
+            loadStaticFoodMap(cfg, { isNearbyFood: true, cuisine: cfg.cuisine || window.__baseScreen.cuisine || null }, resultsCount);
+          } else if (window.__baseScreen.intent === 'TravelTime') {
+            loadStaticTravelMap(cfg);
+          } else if (window.__baseScreen.intent === 'AppointmentLeaveTime') {
+            loadStaticAppointmentMap(cfg);
+          }
+          e.preventDefault();
+        } catch (err) { console.warn('Restore failed', err); }
+      }
+    }
+  });
+}
+
 // Bootstrap IIFE
 (async function bootstrap () {
   console.log('DEBUG: bootstrap function starting');
@@ -256,16 +287,71 @@ function setupDepartOverlay (plan) {
           const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
           const sourceBadge = foodData.source==='cache'?"<span style='font-size:11px;opacity:.6'>(cache)</span>":'';
           foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
-            list.map(r=>`<div class='restaurant-item'>• <strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span></div>`).join('');
+            list.map(r=>`<div class='restaurant-item' tabindex='0' data-name='${r.name.replace(/'/g,'')}' data-lat='${r.location?.lat??''}' data-lng='${r.location?.lng??''}'>• <strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Nearby ${intentInfo.cuisine || 'restaurants'}`;
+          (function enableRestaurantSelection(){
+            const items = foodEl.querySelectorAll('.restaurant-item');
+            function selectRestaurant(el){
+              items.forEach(i=>i.classList.remove('selected'));
+              el.classList.add('selected');
+              document.body.classList.add('detail-mode');
+              const lat = el.getAttribute('data-lat');
+              const lng = el.getAttribute('data-lng');
+              const dest = lat && lng ? `${lat},${lng}` : el.getAttribute('data-name');
+              statusEl.textContent = 'Routing to ' + el.getAttribute('data-name') + '…';
+              const dirUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(dest)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}`;
+              fetch(dirUrl).then(r=>r.json().catch(()=>({}))).then(data=>{
+                if (data.status==='OK' && data.distance && data.duration) {
+                  summaryEl.innerHTML = `<strong>${cfg.origin}</strong> → <strong>${el.getAttribute('data-name')}</strong><br/>Distance: ${data.distance.text} | Duration: ${data.duration.text}`;
+                } else {
+                  summaryEl.innerHTML = `<strong>${cfg.origin}</strong> → <strong>${el.getAttribute('data-name')}</strong><br/>Distance/Duration unavailable`;
+                }
+                loadStaticTravelMap({ ...cfg, destination: dest });
+                statusEl.textContent='Ready';
+              }).catch(()=>{ statusEl.textContent='Error routing'; });
+            }
+            items.forEach(el=>{
+              el.addEventListener('click',()=>selectRestaurant(el));
+              el.addEventListener('keydown',e=>{ if (e.key==='Enter' || e.key===' ' || e.key==='OK') { e.preventDefault(); selectRestaurant(el); } });
+            });
+          })();
           await loadStaticFoodMap(cfg, intentInfo, list.length);
+          // Store base snapshot for restore
+          window.__baseScreen = { intent: 'NearbyFood', summaryHTML: summaryEl.innerHTML, resultsCount: list.length, cuisine: intentInfo.cuisine || null };
+          setupRestoreHandler(cfg);
         } else {
           const ps = foodData?.providerStatus || foodData?.error || 'UNKNOWN';
           const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
-          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• <strong>${r}</strong></div>`).join('');
+          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item' tabindex='0' data-name='${r.replace(/'/g,'')}'>• <strong>${r}</strong><span class='hint'>Press OK / Enter to route • Back/Esc to return</span></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Mock ${intentInfo.cuisine || 'restaurants'} (API ${ps})`;
           statusEl.innerHTML = `<div class='warn'>Places API fallback (${ps})</div>`;
+          (function enableRestaurantSelection(){
+            const items = foodEl.querySelectorAll('.restaurant-item');
+            function selectRestaurant(el){
+              items.forEach(i=>i.classList.remove('selected'));
+              el.classList.add('selected');
+              document.body.classList.add('detail-mode');
+              const dest = el.getAttribute('data-name');
+              statusEl.textContent = 'Routing to ' + dest + '…';
+              const dirUrl = `/api/directions?origin=${encodeURIComponent(cfg.origin)}&destination=${encodeURIComponent(dest)}&mode=${encodeURIComponent(cfg.mode)}&lang=${encodeURIComponent(cfg.lang)}`;
+              fetch(dirUrl).then(r=>r.json().catch(()=>({}))).then(data=>{
+                if (data.status==='OK' && data.distance && data.duration) {
+                  summaryEl.innerHTML = `<strong>${cfg.origin}</strong> → <strong>${dest}</strong><br/>Distance: ${data.distance.text} | Duration: ${data.duration.text}`;
+                } else {
+                  summaryEl.innerHTML = `<strong>${cfg.origin}</strong> → <strong>${dest}</strong><br/>Distance/Duration unavailable`;
+                }
+                loadStaticTravelMap({ ...cfg, destination: dest });
+                statusEl.textContent='Ready';
+              }).catch(()=>{ statusEl.textContent='Error routing'; });
+            }
+            items.forEach(el=>{
+              el.addEventListener('click',()=>selectRestaurant(el));
+              el.addEventListener('keydown',e=>{ if (e.key==='Enter' || e.key===' ' || e.key==='OK') { e.preventDefault(); selectRestaurant(el); } });
+            });
+          })();
           await loadStaticFoodMap(cfg, intentInfo, list.length);
+          window.__baseScreen = { intent: 'NearbyFood', summaryHTML: summaryEl.innerHTML, resultsCount: list.length, cuisine: intentInfo.cuisine || null };
+          setupRestoreHandler(cfg);
         }
       } catch (e) {
         const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
