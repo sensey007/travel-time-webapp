@@ -150,6 +150,7 @@ function shouldForceStatic () {
 
 (async function bootstrap () {
   console.log('DEBUG: bootstrap function starting');
+  if (typeof window.setBootMeta === 'function') window.setBootMeta('Parsing parameters…');
   const cfg = parseDeepLink(window.location.search);
   // Attempt early time extraction (for appointment-only mode if origin missing)
   let extractedApptTime = cfg.apptTime;
@@ -173,8 +174,8 @@ function shouldForceStatic () {
     statusEl.textContent = 'Loading map\u2026';
   }
   if (!cfg.origin || !cfg.destination) {
-    // New: Allow appointment-only mode if we have an extracted appointment time in destination OR origin
     if (extractedApptTime) {
+      if (typeof window.setBootMeta === 'function') window.setBootMeta('Computing appointment plan…');
       statusEl.classList.remove('loading');
       statusEl.innerHTML = '<div class="warn">Origin or destination missing. Showing appointment plan only.</div>';
       const intentInfo = { intent: 'AppointmentLeaveTime' };
@@ -213,18 +214,22 @@ function shouldForceStatic () {
         // ENHANCED SUMMARY: include depart time & status
         summaryEl.innerHTML = `<strong>Appointment:</strong> ${apptLocal}<br/><strong>Depart by:</strong> ${departLocal}<br/><strong>Buffer:</strong> ${plan.bufferMin}m<br/><strong>Status:</strong> ${plan.status}`;
       }
-      // Map panel: show placeholder static message
+      // Map panel placeholder
       mapEl.innerHTML = '<div style="padding:16px;color:#888;font-size:14px">No map (origin/destination missing). Provide ?origin=...&destination=... for route.</div>';
-      return; // stop further processing
+      if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Appointment only ready');
+      return;
     }
+    if (typeof window.setBootMeta === 'function') window.setBootMeta('Missing origin/destination');
     statusEl.classList.remove('loading');
     statusEl.classList.add('error');
     statusEl.innerHTML += '<div>Usage: ?origin=ADDRESS&destination=ADDRESS&mode=driving</div>';
+    if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Missing params');
     return;
   }
   // Overwrite cfg.apptTime if we extracted one
   if (extractedApptTime && !cfg.apptTime) cfg.apptTime = extractedApptTime;
   try {
+    if (typeof window.setBootMeta === 'function') window.setBootMeta('Detecting intent…');
     const forceStatic = shouldForceStatic();
     console.log('DEBUG: forceStatic result:', forceStatic);
     
@@ -293,6 +298,7 @@ function shouldForceStatic () {
 
     // Nearby food intent: we render restaurants + static map (always static for simplicity)
     if (intentInfo.isNearbyFood) {
+      if (typeof window.setBootMeta === 'function') window.setBootMeta('Loading nearby restaurants…');
       statusEl.textContent = 'Loading nearby restaurants\u2026';
       const suppressionMsg = `<div class='warn' style='margin-top:4px'>Route suppressed for NearbyFood intent</div>`;
       try {
@@ -330,7 +336,8 @@ function shouldForceStatic () {
       }
       statusEl.textContent = 'Ready';
       statusEl.classList.remove('loading');
-      return; // done for food intent
+      if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Nearby food ready');
+      return;
     }
 
     // Travel or appointment intent
@@ -484,14 +491,15 @@ function shouldForceStatic () {
 
     statusEl.textContent = 'Ready';
     statusEl.classList.remove('loading');
+    if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Ready');
   } catch (err) {
     console.error(err);
     statusEl.classList.remove('loading');
     statusEl.classList.add('error');
     statusEl.textContent = 'Error: ' + err.message;
-    // Provide static fallback if not already present
     if (!mapEl.querySelector('img')) {
       mapEl.innerHTML = `<div style='padding:16px;color:#f77;font-size:14px'>Map unavailable</div>`;
     }
+    if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Error');
   }
 })();
