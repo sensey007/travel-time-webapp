@@ -178,30 +178,27 @@ function setupDepartOverlay (plan) {
       } else {
         const departLocal = new Date(plan.departTimeISO).toLocaleTimeString();
         const apptLocal = new Date(plan.apptTimeISO).toLocaleTimeString();
-        apptEl.innerHTML = `<div class='panel-title'>Appointment Plan</div>` +
-          `<div class='appt-field'><strong>Appointment:</strong> ${apptLocal}</div>` +
-          `<div class='appt-field'><strong>Buffer:</strong> ${plan.bufferMin} min</div>` +
-          `<div class='appt-field'><strong>Depart by:</strong> ${departLocal}</div>` +
-          `<div class='appt-field' id='apptStatus'><strong>Status:</strong> ${plan.status}</div>` +
-          `<div class='appt-field' id='apptCountdown'></div>`;
-        function fmt (s) { const m = Math.floor(s/60); const r = s%60; return `${m}m ${r}s`; }
-        function updateCountdown () {
+        const statusClass = plan.status === 'Late' ? 'late' : (plan.status === 'LeaveNow' ? 'leave' : 'future');
+        apptEl.innerHTML = `<div class='panel-title'>Appointment</div>` +
+          `<div class='appt-row appt-important'>Appt: <span class='value'>${apptLocal}</span></div>` +
+          `<div class='appt-row appt-important'>Depart: <span class='value'>${departLocal}</span></div>` +
+          `<div class='appt-row appt-status' id='apptStatus'>Status: <span class='value status-val ${statusClass}'>${plan.status}</span></div>` +
+          `<div class='appt-meta'>Buffer ${plan.bufferMin}m</div>`;
+        function updateStatusOnly () {
           const now = Date.now();
-          const leaveIn = Math.floor((new Date(plan.departTimeISO).getTime() - now)/1000);
-          const apptIn = Math.floor((new Date(plan.apptTimeISO).getTime() - now)/1000);
-          const statusEl2 = document.getElementById('apptStatus');
-          if (leaveIn <= 0 && apptIn > 0) statusEl2.innerHTML = '<strong>Status:</strong> LeaveNow';
-          if (apptIn <= 0) statusEl2.innerHTML = '<strong>Status:</strong> Late';
-          const cdEl = document.getElementById('apptCountdown');
-          if (cdEl) {
-            if (apptIn <= 0) cdEl.textContent = 'Appointment time reached';
-            else if (leaveIn > 0) cdEl.textContent = 'Time until depart: ' + fmt(leaveIn);
-            else cdEl.textContent = 'Time until appointment: ' + fmt(apptIn);
-          }
+            const leaveIn = Math.floor((new Date(plan.departTimeISO).getTime() - now)/1000);
+            const apptIn = Math.floor((new Date(plan.apptTimeISO).getTime() - now)/1000);
+            const statusEl2 = document.getElementById('apptStatus');
+            if (!statusEl2) return;
+            let statusTxt = plan.status;
+            if (leaveIn <= 0 && apptIn > 0) statusTxt = 'LeaveNow';
+            if (apptIn <= 0) statusTxt = 'Late';
+            const sc = statusTxt === 'Late' ? 'late' : (statusTxt === 'LeaveNow' ? 'leave' : 'future');
+            statusEl2.innerHTML = `Status: <span class='value status-val ${sc}'>${statusTxt}</span>`;
         }
-        updateCountdown(); setInterval(updateCountdown, 30000);
-        summaryEl.innerHTML = `<strong>Appointment:</strong> ${apptLocal}<br/><strong>Depart by:</strong> ${departLocal}<br/><strong>Buffer:</strong> ${plan.bufferMin}m<br/><strong>Status:</strong> ${plan.status}`;
-        setupDepartOverlay(plan); // overlay for appointment-only mode
+        updateStatusOnly(); setInterval(updateStatusOnly, 30000);
+        summaryEl.innerHTML = `<strong>Appointment:</strong> ${apptLocal}<br/><strong>Depart:</strong> ${departLocal}<br/><strong>Buffer:</strong> ${plan.bufferMin}m<br/><strong>Status:</strong> ${plan.status}`;
+        setupDepartOverlay(plan);
       }
       mapEl.innerHTML = '<div style="padding:16px;color:#888;font-size:14px">No map (origin/destination missing).</div>';
       if (typeof window.hideLoadingSplash === 'function') window.hideLoadingSplash('Appointment only ready');
@@ -311,17 +308,10 @@ function setupDepartOverlay (plan) {
       : `<strong>${leg.start_address}</strong> → <strong>${leg.end_address}</strong><br/>Distance: ${leg.distance.text} | Duration: ${leg.duration.text}`;
     summaryEl.innerHTML = baseSummary + (providerStatus ? `<br/><span style='font-size:11px;opacity:.6'>providerStatus: ${providerStatus}</span>` : '');
 
-    // Appointment enrichment
+    // Appointment enrichment (removed from summary to avoid duplication for minimalist panel)
     if (intentInfo.intent === 'AppointmentLeaveTime' && apptTime) {
-      const durationSec = (trafficData?.durationInTraffic?.value) || (trafficData?.duration?.value) || (leg?.duration?.value) || 0;
-      const planTmp = computeAppointmentPlan(apptTime, durationSec, cfg.bufferMin);
-      if (planTmp.valid) {
-        const departLocal = new Date(planTmp.departTimeISO).toLocaleTimeString();
-        const apptLocal = new Date(planTmp.apptTimeISO).toLocaleTimeString();
-        summaryEl.innerHTML += `<br/><strong>Appointment:</strong> ${apptLocal} (buffer ${planTmp.bufferMin}m)` +
-          `<br/><strong>Depart by:</strong> ${departLocal}` +
-          `<br/><strong>Status:</strong> ${planTmp.status}`;
-      }
+      // Previously appended appointment details to summary; now skip to keep panel minimalist.
+      // We could still compute plan if needed for other logic, but summary remains route-only.
     }
 
     // Static map selection
@@ -341,30 +331,26 @@ function setupDepartOverlay (plan) {
       } else {
         const departLocal = new Date(plan.departTimeISO).toLocaleTimeString();
         const apptLocal = new Date(plan.apptTimeISO).toLocaleTimeString();
-        apptEl.innerHTML = `<div class='panel-title'>Appointment Plan</div>` +
-          `<div class='appt-field'><strong>Appointment:</strong> ${apptLocal}</div>` +
-          `<div class='appt-field'><strong>Travel:</strong> ${Math.round(durationSec/60)} min</div>` +
-          `<div class='appt-field'><strong>Buffer:</strong> ${plan.bufferMin} min</div>` +
-          `<div class='appt-field'><strong>Depart by:</strong> ${departLocal}</div>` +
-          `<div class='appt-field' id='apptStatus'><strong>Status:</strong> ${plan.status}</div>` +
-          `<div class='appt-field' id='apptCountdown'></div>`;
-        function fmt (s) { const m = Math.floor(s/60); const r = s%60; return `${m}m ${r}s`; }
-        function updateCountdown () {
+        const statusClass = plan.status === 'Late' ? 'late' : (plan.status === 'LeaveNow' ? 'leave' : 'future');
+        apptEl.innerHTML = `<div class='panel-title'>Appointment</div>` +
+          `<div class='appt-row appt-important'>Appt: <span class='value'>${apptLocal}</span></div>` +
+          `<div class='appt-row appt-important'>Depart: <span class='value'>${departLocal}</span></div>` +
+          `<div class='appt-row appt-status' id='apptStatus'>Status: <span class='value status-val ${statusClass}'>${plan.status}</span></div>` +
+          `<div class='appt-meta'>Travel ${Math.round(durationSec/60)}m • Buffer ${plan.bufferMin}m</div>`;
+        function updateStatusOnly () {
           const now = Date.now();
           const leaveIn = Math.floor((new Date(plan.departTimeISO).getTime() - now)/1000);
           const apptIn = Math.floor((new Date(plan.apptTimeISO).getTime() - now)/1000);
           const statusEl2 = document.getElementById('apptStatus');
-          if (leaveIn <= 0 && apptIn > 0) statusEl2.innerHTML = '<strong>Status:</strong> LeaveNow';
-          if (apptIn <= 0) statusEl2.innerHTML = '<strong>Status:</strong> Late';
-          const cdEl = document.getElementById('apptCountdown');
-          if (cdEl) {
-            if (apptIn <= 0) cdEl.textContent = 'Appointment time reached';
-            else if (leaveIn > 0) cdEl.textContent = 'Time until depart: ' + fmt(leaveIn);
-            else cdEl.textContent = 'Time until appointment: ' + fmt(apptIn);
-          }
+          if (!statusEl2) return;
+          let statusTxt = plan.status;
+          if (leaveIn <= 0 && apptIn > 0) statusTxt = 'LeaveNow';
+          if (apptIn <= 0) statusTxt = 'Late';
+          const sc = statusTxt === 'Late' ? 'late' : (statusTxt === 'LeaveNow' ? 'leave' : 'future');
+          statusEl2.innerHTML = `Status: <span class='value status-val ${sc}'>${statusTxt}</span>`;
         }
-        updateCountdown(); setInterval(updateCountdown, 30000);
-        setupDepartOverlay(plan); // overlay on map
+        updateStatusOnly(); setInterval(updateStatusOnly, 30000);
+        setupDepartOverlay(plan);
       }
     }
 
