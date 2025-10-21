@@ -72,6 +72,47 @@
         try { lc.focus(); } catch(_) {}
       }
     });
+    (function enableRemoteScroll(){
+      const leftColumn = document.getElementById('leftColumn');
+      const mapEl = document.getElementById('map');
+      if (!leftColumn) return;
+      // Клавиатурный (пульт) скролл независимо от текущего фокуса
+      window.addEventListener('keydown', (e) => {
+        const key = e.key;
+        if (!leftColumn) return;
+        if (['ArrowDown','ArrowUp','PageDown','PageUp','Home','End'].includes(key)) {
+          let delta = 0;
+          switch (key) {
+            case 'ArrowDown': delta = 60; break;
+            case 'ArrowUp': delta = -60; break;
+            case 'PageDown': delta = (leftColumn.clientHeight || 400) - 40; break;
+            case 'PageUp': delta = -((leftColumn.clientHeight || 400) - 40); break;
+            case 'Home': leftColumn.scrollTop = 0; e.preventDefault(); try { leftColumn.focus(); } catch(_){} return;
+            case 'End': leftColumn.scrollTop = leftColumn.scrollHeight; e.preventDefault(); try { leftColumn.focus(); } catch(_){} return;
+          }
+          leftColumn.scrollTop = Math.max(0, Math.min(leftColumn.scrollHeight, leftColumn.scrollTop + delta));
+          // Если панель не в фокусе — вернуть фокус
+          if (document.activeElement !== leftColumn) {
+            try { leftColumn.focus(); } catch(_){}
+          }
+          e.preventDefault();
+        }
+      });
+      // Автовозврат фокуса при обновлении карты (вставке <img>)
+      if (mapEl) {
+        const obs = new MutationObserver(muts => {
+          for (const m of muts) {
+            if ([...m.addedNodes].some(n => n.tagName === 'IMG')) {
+              // Возвращаем фокус если его забрали
+              if (document.activeElement !== leftColumn) {
+                try { leftColumn.focus(); } catch(_){}
+              }
+            }
+          }
+        });
+        obs.observe(mapEl, { childList: true, subtree: true });
+      }
+    })();
   </script>
   <script type="module" src="/static/main.js?v=5&debug=true"></script>
   <script id="gmaps-script-template" type="application/json">{"key":"__GOOGLE_MAPS_API_KEY__"}</script>
