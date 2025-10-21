@@ -256,20 +256,20 @@ function setupDepartOverlay (plan) {
           const clusterInfo = foodData.clusterDistance?.text ? `<div class='cluster-meta'>Approx cluster distance: ${foodData.clusterDistance.text}</div>` : '';
           const sourceBadge = foodData.source==='cache'?"<span style='font-size:11px;opacity:.6'>(cache)</span>":'';
           foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'restaurants'} (${list.length}) ${sourceBadge}</div>` + clusterInfo +
-            list.map(r=>`<div class='restaurant-item'>• <strong>${r.name}</strong>${r.rating?` ⭐ ${r.rating}`:''}${r.user_ratings_total?` (${r.user_ratings_total})`:''}<br/><span style='opacity:.8'>${r.vicinity||''}</span></div>`).join('');
+            list.map(r=>`<div class='restaurant-item'>• <strong>${r.name}</strong>${r.rating?` <span class='rating'>[${r.rating}]</span>`:''}${r.user_ratings_total?` <span class='rating-count'>(${r.user_ratings_total})</span>`:''}<br/><span class='restaurant-addr'>${r.vicinity||''}</span></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Nearby ${intentInfo.cuisine || 'restaurants'}`;
           await loadStaticFoodMap(cfg, intentInfo, list.length);
         } else {
           const ps = foodData?.providerStatus || foodData?.error || 'UNKNOWN';
           const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
-          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• ${r}</div>`).join('');
+          foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• <strong>${r}</strong></div>`).join('');
           summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Mock ${intentInfo.cuisine || 'restaurants'} (API ${ps})`;
           statusEl.innerHTML = `<div class='warn'>Places API fallback (${ps})</div>`;
           await loadStaticFoodMap(cfg, intentInfo, list.length);
         }
       } catch (e) {
         const list = getMockRestaurants(intentInfo.cuisine); foodEl.style.display='block';
-        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• ${r}</div>`).join('');
+        foodEl.innerHTML = `<div class='panel-title'>Nearby ${intentInfo.cuisine || 'food'} (mock)</div>` + list.map(r=>`<div class='restaurant-item'>• <strong>${r}</strong></div>`).join('');
         summaryEl.innerHTML = `<strong>${cfg.origin}</strong><br/>Mock ${intentInfo.cuisine || 'restaurants'} (exception)`;
         statusEl.innerHTML = `<div class='warn'>Exception loading Places: ${e.message}</div>`;
         await loadStaticFoodMap(cfg, intentInfo, list.length);
